@@ -1,0 +1,466 @@
+// SyncEngine - AI-Powered Web Scraping and Database Population Platform
+// Prisma Schema for Configuration Database
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Data Source Configuration - User's target database connections
+model DataSource {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  
+  // Connection settings
+  dbType      String   // 'postgresql', 'mysql', 'mssql', 'oracle'
+  host        String
+  port        Int
+  database    String
+  username    String
+  password    String   // Encrypted in production
+  sslEnabled  Boolean  @default(true)
+  
+  // Status
+  isActive    Boolean  @default(true)
+  lastTestedAt DateTime?
+  connectionStatus String @default("untested") // 'connected', 'failed', 'untested'
+  
+  // Cached schema analysis (JSON)
+  schemaJson  String?  // AI-analyzed database structure
+  lastAnalyzedAt DateTime?
+  
+  // Relations
+  syncConfigs SyncConfig[]
+  auditLogs   AuditLog[]
+  assignments Assignment[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Web Source Configuration - Websites to scrape
+model WebSource {
+  id              String   @id @default(cuid())
+  name            String
+  baseUrl         String
+  description     String?
+  
+  // Scraping settings
+  scraperType     String   @default("hybrid") // 'browser', 'http', 'hybrid'
+  authType        String   @default("none")   // 'none', 'cookie', 'header', 'basic'
+  authConfig      String?  // Encrypted JSON: {cookies, headers, credentials}
+  
+  // Rate limiting
+  requestDelay    Int      @default(1000)     // ms between requests
+  maxConcurrent   Int      @default(1)
+  
+  // Pagination detection (AI-analyzed)
+  paginationType  String?  // 'query_param', 'path', 'infinite_scroll', 'next_button', 'none'
+  paginationConfig String? // JSON: {paramName, selector, urlPattern, maxPages}
+  
+  // Status
+  isActive        Boolean  @default(true)
+  lastTestedAt    DateTime?
+  connectionStatus String  @default("untested") // 'connected', 'failed', 'untested'
+  
+  // Cached website structure (AI-analyzed)
+  structureJson   String?  // JSON: detected data patterns, repeating elements
+  lastAnalyzedAt  DateTime?
+  
+  // Relations
+  assignments     Assignment[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Assignment - Database-Website pair with mappings
+model Assignment {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Relations to data source and web source
+  dataSourceId    String
+  dataSource      DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  webSourceId     String
+  webSource       WebSource @relation(fields: [webSourceId], references: [id], onDelete: Cascade)
+  
+  // Target table in user's database
+  targetTable     String
+  targetSchema    String   @default("public")
+  
+  // Sync mode: manual (JSON staging) or auto (direct insert)
+  syncMode        String   @default("manual") // 'manual', 'auto'
+  
+  // Schedule settings (for auto mode)
+  scheduleType    String   @default("manual") // 'manual', 'hourly', 'daily', 'weekly', 'cron'
+  cronExpression  String?
+  
+  // Assignment status
+  status          String   @default("draft") // 'draft', 'testing', 'active', 'paused', 'error'
+  
+  // Mapping configuration (AI-generated, user-editable)
+  mappingConfig   String?  // JSON: overall mapping settings
+  
+  // Start URL for extraction (can include pagination)
+  startUrl        String?
+  
+  // Relations
+  extractionRules ExtractionRule[]
+  extractionJobs  ExtractionJob[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([dataSourceId, webSourceId, targetTable])
+}
+
+// Extraction Rule - Selectors and patterns for data extraction
+model ExtractionRule {
+  id              String   @id @default(cuid())
+  
+  // Parent assignment
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  
+  // Target database column
+  targetColumn    String
+  
+  // Extraction configuration
+  selector        String   // CSS selector or XPath
+  selectorType    String   @default("css") // 'css', 'xpath'
+  attribute       String   @default("text") // 'text', 'href', 'src', 'html', or custom attribute
+  
+  // Data transformation
+  transformType   String?  // 'trim', 'regex', 'date', 'number', 'json', 'custom'
+  transformConfig String?  // JSON: {pattern, format, replacement, etc.}
+  
+  // Default value if extraction fails
+  defaultValue    String?
+  
+  // Validation
+  dataType        String   @default("string") // 'string', 'number', 'date', 'boolean', 'json'
+  isRequired      Boolean  @default(false)
+  validationRegex String?  // Optional regex for validation
+  
+  // Ordering
+  sortOrder       Int      @default(0)
+  
+  // Status
+  isActive        Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([assignmentId, targetColumn])
+}
+
+// Extraction Job - Track extraction executions
+model ExtractionJob {
+  id              String   @id @default(cuid())
+  
+  // Parent assignment
+  assignmentId    String
+  assignment      Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  
+  // Job status
+  status          String   @default("pending") // 'pending', 'running', 'staging', 'completed', 'failed', 'cancelled'
+  syncMode        String   // 'manual', 'auto'
+  
+  // Timing
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  // Progress metrics
+  pagesProcessed  Int      @default(0)
+  pagesTotal      Int?     // null if unknown
+  rowsExtracted   Int      @default(0)
+  rowsInserted    Int      @default(0)
+  rowsFailed      Int      @default(0)
+  
+  // For manual mode - JSON staging
+  stagedDataPath  String?  // Path to JSON file for large datasets
+  stagedDataJson  String?  // Inline JSON for small datasets (<1MB)
+  stagedRowCount  Int      @default(0)
+  
+  // Current progress URL (for resuming)
+  currentUrl      String?
+  
+  // Error handling
+  errorMessage    String?
+  errorDetails    String?  // JSON: detailed error info, stack trace
+  
+  // Metadata
+  triggeredBy     String   @default("manual") // 'manual', 'schedule', 'api'
+  
+  // Relations
+  processLogs     ProcessLog[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Process Log - Detailed logs for extraction jobs
+model ProcessLog {
+  id              String   @id @default(cuid())
+  
+  // Parent job
+  jobId           String
+  job             ExtractionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  // Log entry
+  level           String   // 'debug', 'info', 'warn', 'error'
+  message         String
+  details         String?  // JSON: additional context
+  
+  // Context
+  url             String?  // URL being processed when log was created
+  rowIndex        Int?     // Row number if applicable
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([jobId, createdAt])
+}
+
+// Sync Configuration - What tables/columns to sync (legacy, kept for compatibility)
+model SyncConfig {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  
+  // Parent data source
+  dataSourceId String
+  dataSource   DataSource @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  
+  // Sync settings
+  isActive    Boolean  @default(true)
+  syncMode    String   @default("full") // 'full', 'incremental'
+  
+  // Schedule
+  scheduleType String  @default("manual") // 'manual', 'hourly', 'daily', 'weekly', 'cron'
+  cronExpression String?
+  
+  // Output settings
+  outputPath  String   @default("./output")
+  outputFileName String @default("sync_data.db")
+  compressOutput Boolean @default(false)
+  encryptOutput Boolean @default(false)
+  
+  // Relations
+  tableConfigs TableConfig[]
+  syncJobs     SyncJob[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Table Configuration - Which tables to sync
+model TableConfig {
+  id          String   @id @default(cuid())
+  
+  // Parent sync config
+  syncConfigId String
+  syncConfig   SyncConfig @relation(fields: [syncConfigId], references: [id], onDelete: Cascade)
+  
+  // Table settings
+  sourceSchema String  @default("public")
+  sourceTable  String
+  targetTable  String? // If different from source
+  
+  // Filtering
+  whereClause  String?
+  rowLimit     Int?
+  
+  // Incremental settings
+  incrementalColumn String?
+  lastSyncValue    String?
+  
+  // Relations
+  columnConfigs ColumnConfig[]
+  
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([syncConfigId, sourceSchema, sourceTable])
+}
+
+// Column Configuration - Which columns to sync
+model ColumnConfig {
+  id          String   @id @default(cuid())
+  
+  // Parent table config
+  tableConfigId String
+  tableConfig   TableConfig @relation(fields: [tableConfigId], references: [id], onDelete: Cascade)
+  
+  // Column settings
+  sourceColumn String
+  targetColumn String? // If different from source
+  dataType     String?
+  
+  // Data masking
+  maskingType  String  @default("none") // 'none', 'redact', 'hash', 'randomize', 'partial'
+  maskingConfig String? // JSON config for masking
+  
+  isIncluded   Boolean @default(true)
+  isPrimaryKey Boolean @default(false)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tableConfigId, sourceColumn])
+}
+
+// Sync Job - Track sync executions
+model SyncJob {
+  id          String   @id @default(cuid())
+  
+  // Parent sync config
+  syncConfigId String
+  syncConfig   SyncConfig @relation(fields: [syncConfigId], references: [id], onDelete: Cascade)
+  
+  // Job status
+  status      String   @default("pending") // 'pending', 'running', 'completed', 'failed', 'cancelled'
+  
+  // Timing
+  startedAt   DateTime?
+  completedAt DateTime?
+  
+  // Results
+  rowsProcessed Int     @default(0)
+  tablesProcessed Int   @default(0)
+  outputFileSize Int?   // bytes
+  outputFilePath String?
+  
+  // Error handling
+  errorMessage String?
+  errorDetails String?
+  
+  // Metadata
+  triggeredBy  String  @default("manual") // 'manual', 'schedule', 'api'
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Audit Log - Track all system activities
+model AuditLog {
+  id          String   @id @default(cuid())
+  
+  // Event info
+  eventType   String   // 'sync_started', 'sync_completed', 'config_changed', 'download', 'login', etc.
+  eventDetails String? // JSON details
+  
+  // Actor
+  userId      String?
+  userEmail   String?
+  ipAddress   String?
+  
+  // Resource
+  resourceType String? // 'data_source', 'sync_config', 'sync_job', etc.
+  resourceId   String?
+  
+  // Optional relation to data source
+  dataSourceId String?
+  dataSource   DataSource? @relation(fields: [dataSourceId], references: [id], onDelete: SetNull)
+  
+  createdAt   DateTime @default(now())
+}
+
+// User - Admin authentication with OTP
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String?
+  role        String   @default("supervisor") // 'admin', 'supervisor'
+  
+  // Account status
+  status      String   @default("pending") // 'pending', 'approved', 'suspended', 'expired'
+  isActive    Boolean  @default(true)
+  
+  // Account lifecycle
+  expiresAt   DateTime?  // Account expiry date (null = never expires)
+  approvedAt  DateTime?  // When admin approved the account
+  approvedBy  String?    // ID of admin who approved
+  
+  // Activity tracking
+  lastLoginAt DateTime?
+  loginCount  Int       @default(0)
+  
+  // Relations
+  otpTokens   OtpToken[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// OTP Token for passwordless authentication
+model OtpToken {
+  id          String   @id @default(cuid())
+  code        String   // 6-digit OTP code (hashed)
+  
+  // Parent user
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Token lifecycle
+  expiresAt   DateTime // 10 minutes from creation
+  used        Boolean  @default(false)
+  usedAt      DateTime?
+  
+  // Request metadata
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime @default(now())
+}
+
+// SMTP Settings for email delivery
+model SmtpSettings {
+  id            String   @id @default(cuid())
+  
+  // Enable/disable
+  enabled       Boolean  @default(false)
+  
+  // Service configuration
+  service       String   @default("custom") // 'custom', 'gmail', 'outlook', etc.
+  host          String?  // e.g., 'smtp365.mcmaster.ca'
+  port          Int      @default(25)
+  
+  // Security
+  secure        Boolean  @default(false) // true for 465, false for other ports
+  ignoreTls     Boolean  @default(false) // Ignore TLS for servers without it
+  
+  // Authentication
+  username      String?  // e.g., 'engai@mcmaster.ca'
+  password      String?  // Encrypted
+  
+  // Sender info
+  fromEmail     String?  // e.g., 'engai@mcmaster.ca'
+  fromName      String   @default("SyncEngine")
+  
+  // Status
+  lastTestedAt  DateTime?
+  testStatus    String?  // 'success', 'failed'
+  testError     String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Settings - Global application settings
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
