@@ -125,8 +125,8 @@ export default function LoginPage() {
     }
   }
 
-  async function handleVerifyOtp() {
-    const otpCode = otp.join('');
+  async function handleVerifyOtp(otpCodeOverride?: string) {
+    const otpCode = otpCodeOverride || otp.join('');
     
     if (otpCode.length !== 6) {
       setError('Please enter the complete 6-digit code');
@@ -182,7 +182,8 @@ export default function LoginPage() {
 
     // Auto-submit when all digits entered
     if (value && index === 5 && newOtp.every(d => d)) {
-      setTimeout(() => handleVerifyOtp(), 100);
+      const completeOtp = newOtp.join('');
+      setTimeout(() => handleVerifyOtp(completeOtp), 100);
     }
   }
 
@@ -202,7 +203,8 @@ export default function LoginPage() {
         });
         setOtp(newOtp);
         if (digits.length === 6) {
-          setTimeout(() => handleVerifyOtp(), 100);
+          const completeOtp = newOtp.join('');
+          setTimeout(() => handleVerifyOtp(completeOtp), 100);
         }
       });
     }

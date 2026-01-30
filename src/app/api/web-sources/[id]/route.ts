@@ -70,6 +70,8 @@ export async function PUT(
       name,
       baseUrl,
       description,
+      isListMode,
+      urlList,
       scraperType,
       authType,
       authConfig,
@@ -116,6 +118,8 @@ export async function PUT(
     if (name !== undefined) updateData.name = name;
     if (baseUrl !== undefined) updateData.baseUrl = baseUrl;
     if (description !== undefined) updateData.description = description;
+    if (isListMode !== undefined) updateData.isListMode = isListMode;
+    if (urlList !== undefined) updateData.urlList = urlList;
     if (scraperType !== undefined) updateData.scraperType = scraperType;
     if (authType !== undefined) updateData.authType = authType;
     if (encryptedAuthConfig !== undefined) updateData.authConfig = encryptedAuthConfig;

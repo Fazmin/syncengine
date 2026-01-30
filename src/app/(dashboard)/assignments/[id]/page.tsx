@@ -355,10 +355,37 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               </div>
             </CardHeader>
             <CardContent>
+              {/* Explanation Section */}
+              <div className="mb-6 p-4 rounded-lg bg-muted/50 border border-muted">
+                <p className="text-sm font-medium mb-2">How Extraction Rules Work</p>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Each rule tells the scraper how to find and extract one piece of data from the webpage. 
+                  Think of it as giving directions: &quot;Find this element, take this value, and save it here.&quot;
+                </p>
+                <div className="grid gap-2 text-xs text-muted-foreground">
+                  <div className="flex gap-2">
+                    <span className="font-medium text-foreground min-w-[100px]">Target Column:</span>
+                    <span>The database column where the extracted data will be saved (e.g., &quot;product_name&quot;, &quot;price&quot;)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-medium text-foreground min-w-[100px]">CSS Selector:</span>
+                    <span>The pattern to find elements on the page (e.g., &quot;.product-title&quot; for class, &quot;#price&quot; for ID, &quot;h1&quot; for tag)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-medium text-foreground min-w-[100px]">Attribute:</span>
+                    <span>What to extract — Text (visible content), Href (link URL), Src (image URL), or HTML (raw markup)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-medium text-foreground min-w-[100px]">Data Type:</span>
+                    <span>How to format the value — String (text), Number (numeric), Date (datetime), Boolean (true/false)</span>
+                  </div>
+                </div>
+              </div>
+
               {rules.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <p>No extraction rules configured.</p>
-                  <p className="text-sm mt-1">Click "AI Suggest" to auto-generate rules or "Add Rule" to create manually.</p>
+                  <p className="text-sm mt-1">Click &quot;AI Suggest&quot; to auto-generate rules or &quot;Add Rule&quot; to create manually.</p>
                 </div>
               ) : (
                 <div className="space-y-4">

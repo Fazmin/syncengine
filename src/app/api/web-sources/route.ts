@@ -37,6 +37,8 @@ export async function POST(request: NextRequest) {
       name, 
       baseUrl, 
       description, 
+      isListMode,
+      urlList,
       scraperType, 
       authType, 
       authConfig,
@@ -60,6 +62,24 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Validate URL list if in list mode
+    if (isListMode && urlList) {
+      try {
+        const urls = JSON.parse(urlList);
+        if (!Array.isArray(urls)) {
+          throw new Error('URL list must be an array');
+        }
+        for (const url of urls) {
+          new URL(url);
+        }
+      } catch (e) {
+        return NextResponse.json(
+          { error: 'Invalid URL list format' },
+          { status: 400 }
+        );
+      }
+    }
     
     // Encrypt auth config if provided
     let encryptedAuthConfig = null;
@@ -82,6 +102,8 @@ export async function POST(request: NextRequest) {
         name,
         baseUrl,
         description,
+        isListMode: isListMode || false,
+        urlList: isListMode ? urlList : null,
         scraperType: scraperType || 'hybrid',
         authType: authType || 'none',
         authConfig: encryptedAuthConfig,
@@ -89,12 +111,17 @@ export async function POST(request: NextRequest) {
         maxConcurrent: maxConcurrent || 1,
       }
     });
+
+    // Calculate URL count for logging
+    const urlCount = isListMode && urlList 
+      ? 1 + JSON.parse(urlList).length 
+      : 1;
     
     // Log the creation
     await prisma.auditLog.create({
       data: {
         eventType: 'web_source_created',
-        eventDetails: JSON.stringify({ name, baseUrl }),
+        eventDetails: JSON.stringify({ name, baseUrl, isListMode, urlCount }),
         resourceType: 'web_source',
         resourceId: webSource.id,
       }

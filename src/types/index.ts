@@ -239,6 +239,8 @@ export interface WebSource {
   name: string;
   baseUrl: string;
   description?: string | null;
+  isListMode: boolean;
+  urlList?: string | null; // JSON array of additional URLs
   scraperType: string;
   authType: string;
   authConfig?: string | null;
@@ -443,6 +445,8 @@ export interface WebSourceFormData {
   name: string;
   baseUrl: string;
   description?: string;
+  isListMode?: boolean;
+  urlList?: string; // JSON array of additional URLs
   scraperType: ScraperType;
   authType: AuthType;
   authConfig?: string;

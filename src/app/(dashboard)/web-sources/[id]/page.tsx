@@ -17,11 +17,19 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ArrowLeft, Globe, Loader2, Zap, Search, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { ArrowLeft, Globe, Loader2, Zap, Search, CheckCircle2, XCircle, AlertCircle, List } from 'lucide-react';
 import Link from 'next/link';
 import { getWebSource, updateWebSource, testWebSourceConnection, analyzeWebSource } from '@/lib/api';
 import { toast } from 'sonner';
-import type { WebSource, WebSourceFormData } from '@/types';
+import type { WebSource, WebSourceFormData, WebsiteStructure } from '@/types';
 
 function ConnectionStatusBadge({ status }: { status: string }) {
   const config = {
@@ -49,6 +57,8 @@ export default function EditWebSourcePage({ params }: { params: Promise<{ id: st
   const [isTesting, setIsTesting] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [formData, setFormData] = useState<Partial<WebSourceFormData>>({});
+  const [analysisResults, setAnalysisResults] = useState<WebsiteStructure | null>(null);
+  const [showAnalysisDialog, setShowAnalysisDialog] = useState(false);
 
   useEffect(() => {
     fetchWebSource();
@@ -111,10 +121,19 @@ export default function EditWebSourcePage({ params }: { params: Promise<{ id: st
 
   async function handleAnalyze() {
     setIsAnalyzing(true);
+    setAnalysisResults(null);
+    setShowAnalysisDialog(true); // Show dialog immediately in loading state
+    
     const response = await analyzeWebSource(id);
     
     if (response.success && response.data) {
       const structure = response.data.structure;
+      
+      // Populate the dialog with results
+      if (structure) {
+        setAnalysisResults(structure);
+      }
+      
       toast.success(`Found ${structure?.repeatingElements?.length || 0} data patterns`);
       setWebSource(prev => prev ? { 
         ...prev, 
@@ -122,7 +141,8 @@ export default function EditWebSourcePage({ params }: { params: Promise<{ id: st
         paginationType: structure?.pagination?.type || prev.paginationType,
       } : null);
     } else {
-      toast.error('Failed to analyze website');
+      toast.error(response.error || 'Failed to analyze website');
+      setShowAnalysisDialog(false); // Close dialog on error
     }
     
     setIsAnalyzing(false);
@@ -224,6 +244,56 @@ export default function EditWebSourcePage({ params }: { params: Promise<{ id: st
             </CardContent>
           </Card>
 
+          {/* URL List Card - shown when in list mode */}
+          {webSource?.isListMode && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/20 to-violet-600/10">
+                    <List className="h-5 w-5 text-purple-400" />
+                  </div>
+                  <div>
+                    <CardTitle>URL List</CardTitle>
+                    <CardDescription>
+                      {(() => {
+                        try {
+                          const urls = webSource.urlList ? JSON.parse(webSource.urlList) : [];
+                          return `${1 + urls.length} URLs in this list`;
+                        } catch {
+                          return 'Multiple URLs configured';
+                        }
+                      })()}
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 rounded-md bg-muted p-2 text-sm">
+                    <Badge variant="outline" className="shrink-0">Primary</Badge>
+                    <span className="font-mono text-xs truncate">{webSource.baseUrl}</span>
+                  </div>
+                  {(() => {
+                    try {
+                      const urls = webSource.urlList ? JSON.parse(webSource.urlList) : [];
+                      return urls.map((url: string, index: number) => (
+                        <div key={index} className="flex items-center gap-2 rounded-md bg-muted/50 p-2 text-sm">
+                          <Badge variant="secondary" className="shrink-0">{index + 2}</Badge>
+                          <span className="font-mono text-xs truncate">{url}</span>
+                        </div>
+                      ));
+                    } catch {
+                      return null;
+                    }
+                  })()}
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  The first URL is used for analysis. Rules learned from it are applied to all URLs during extraction.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Scraping Configuration</CardTitle>
@@ -313,6 +383,120 @@ export default function EditWebSourcePage({ params }: { params: Promise<{ id: st
           </div>
         </form>
       </main>
+
+      <Dialog open={showAnalysisDialog} onOpenChange={(open) => { setShowAnalysisDialog(open); if (!open) setAnalysisResults(null); }}>
+        <DialogContent className="w-[80vw] max-w-[1400px] max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>Analysis Results: {webSource?.name}</DialogTitle>
+            <DialogDescription>
+              {isAnalyzing ? 'Analyzing website structure...' : `Detected data patterns and page structure from ${analysisResults?.url}`}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {isAnalyzing ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+              <p className="text-muted-foreground">Scanning page for data patterns...</p>
+              <p className="text-sm text-muted-foreground mt-1">This may take a few seconds</p>
+            </div>
+          ) : (
+          <div className="grid grid-cols-2 gap-6">
+            {/* Left Column - Formatted View */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-muted-foreground">Formatted View</h3>
+              <ScrollArea className="h-[60vh] pr-4 rounded-lg border p-4">
+                <div className="space-y-6">
+                  {/* Pagination Info */}
+                  {analysisResults?.pagination && (
+                    <div className="rounded-lg border p-4">
+                      <h4 className="font-medium flex items-center gap-2 mb-2">
+                        <Badge variant="secondary">Pagination Detected</Badge>
+                      </h4>
+                      <div className="text-sm text-muted-foreground space-y-1">
+                        <p><span className="font-medium">Type:</span> {analysisResults.pagination.type}</p>
+                        {analysisResults.pagination.paramName && (
+                          <p><span className="font-medium">Parameter:</span> {analysisResults.pagination.paramName}</p>
+                        )}
+                        {analysisResults.pagination.selector && (
+                          <p><span className="font-medium">Selector:</span> <code className="bg-muted px-1 rounded">{analysisResults.pagination.selector}</code></p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Repeating Elements */}
+                  {analysisResults?.repeatingElements && analysisResults.repeatingElements.length > 0 ? (
+                    <div className="space-y-4">
+                      <h4 className="font-medium">Data Patterns Found ({analysisResults.repeatingElements.length})</h4>
+                      {analysisResults.repeatingElements.map((element, index) => (
+                        <div key={index} className="rounded-lg border p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <code className="text-sm bg-muted px-2 py-1 rounded">{element.selector}</code>
+                            <Badge variant="outline">{element.count} items</Badge>
+                          </div>
+                          
+                          {element.fields && element.fields.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-sm text-muted-foreground font-medium">Detected Fields:</p>
+                              <div className="grid gap-2">
+                                {element.fields.map((field, fieldIndex) => (
+                                  <div key={fieldIndex} className="flex items-start gap-3 text-sm bg-muted/50 rounded p-2">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium">{field.name}</span>
+                                        <Badge variant="outline" className="text-xs">{field.dataType}</Badge>
+                                      </div>
+                                      <code className="text-xs text-muted-foreground block mt-1">{field.selector} → {field.attribute}</code>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={field.sampleValue}>
+                                      Sample: {field.sampleValue}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p>No repeating data patterns detected on this page.</p>
+                      <p className="text-sm">Try analyzing a page with lists, tables, or product grids.</p>
+                    </div>
+                  )}
+
+                  {/* Forms */}
+                  {analysisResults?.forms && analysisResults.forms.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="font-medium">Forms Found ({analysisResults.forms.length})</h4>
+                      {analysisResults.forms.map((form, index) => (
+                        <div key={index} className="text-sm bg-muted/50 rounded p-2">
+                          <p><span className="font-medium">Action:</span> {form.action || '(current page)'}</p>
+                          <p><span className="font-medium">Method:</span> {form.method}</p>
+                          <p><span className="font-medium">Fields:</span> {form.fields.join(', ') || 'None'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+
+            {/* Right Column - JSON View */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-muted-foreground">JSON Structure</h3>
+              <ScrollArea className="h-[60vh] rounded-lg border bg-slate-950">
+                <pre className="p-4 text-xs text-slate-300 font-mono whitespace-pre-wrap">
+                  {JSON.stringify(analysisResults, null, 2)}
+                </pre>
+              </ScrollArea>
+            </div>
+          </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

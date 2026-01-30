@@ -50,6 +50,10 @@ model WebSource {
   baseUrl         String
   description     String?
   
+  // List mode - multiple URLs with same structure
+  isListMode      Boolean  @default(false)    // true if this is a list of URLs
+  urlList         String?  // JSON array of additional URLs (when isListMode=true)
+  
   // Scraping settings
   scraperType     String   @default("hybrid") // 'browser', 'http', 'hybrid'
   authType        String   @default("none")   // 'none', 'cookie', 'header', 'basic'
