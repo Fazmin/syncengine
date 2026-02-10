@@ -274,6 +274,8 @@ export interface Assignment {
   status: string;
   mappingConfig?: string | null;
   startUrl?: string | null;
+  extractionMethod: string;
+  llmCaptureConfig?: string | null;
   extractionRules?: ExtractionRule[];
   extractionJobs?: ExtractionJob[];
   createdAt: Date;
@@ -438,6 +440,85 @@ export interface MappingSuggestion {
   selector: string;
   transformType?: TransformType;
   transformConfig?: string;
+}
+
+// Schema-aware analysis types
+export interface SchemaAwareAnalysis {
+  assignmentId: string;
+  assignmentName: string;
+  targetTable: string;
+  targetSchema: string;
+  dataSourceName: string;
+  webStructure: WebsiteStructure;
+  targetColumns: ColumnSchema[];
+  proposedMappings: ProposedMapping[];
+  summary: {
+    totalColumns: number;
+    mappedColumns: number;
+    unmappedColumns: string[];
+    averageConfidence: number;
+  };
+}
+
+export interface ProposedMapping {
+  targetColumn: string;
+  dbColumn: ColumnSchema;
+  webField?: DetectedField;
+  selector: string;
+  selectorType: SelectorType;
+  attribute: AttributeType;
+  transformType?: TransformType;
+  transformConfig?: string;
+  confidence: number;
+  reasoning?: string;
+  sampleValue?: string;
+  dataType: DataType;
+  isRequired: boolean;
+}
+
+// LLM-based extraction types
+export type ExtractionMethod = 'selector' | 'llm';
+
+export interface LLMAnalysisResult {
+  assignmentId: string;
+  assignmentName: string;
+  targetTable: string;
+  targetSchema: string;
+  dataSourceName: string;
+  pageTitle: string;
+  pageUrl: string;
+  columns: LLMColumnAnalysis[];
+  summary: {
+    totalColumns: number;
+    availableColumns: number;
+    unavailableColumns: string[];
+  };
+}
+
+export interface LLMColumnAnalysis {
+  columnName: string;
+  columnType: string;
+  isAvailable: boolean;
+  confidence: number;
+  sampleValue?: string;
+  reasoning: string;
+  extractionHint?: string;
+}
+
+export interface LLMCaptureConfig {
+  systemPrompt: string;
+  jsonSchema: Record<string, unknown>;
+  columnMappings: LLMColumnMapping[];
+  model: string;
+  temperature: number;
+}
+
+export interface LLMColumnMapping {
+  columnName: string;
+  jsonField: string;
+  description: string;
+  dataType: string;
+  isRequired: boolean;
 }
 
 // Form data types

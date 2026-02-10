@@ -34,6 +34,7 @@ const dbTypes: { value: DatabaseType; label: string; icon: string; defaultPort: 
 const availableSqliteDbs = [
   { path: './data/products.db', name: 'Products Database', description: 'E-commerce product catalog' },
   { path: './data/customers.db', name: 'Customers Database', description: 'Customer information and orders' },
+  { path: './data/camps.db', name: 'Summer Camps Database', description: 'Summer camp listings and programs' },
 ];
 
 export default function NewDataSourcePage() {

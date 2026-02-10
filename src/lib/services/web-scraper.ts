@@ -92,7 +92,7 @@ export class WebScraper {
   /**
    * Fetch HTML content from URL
    */
-  private async fetchHtml(url: string): Promise<string> {
+  async fetchHtml(url: string): Promise<string> {
     const scraperType = this.determineScraperType(url);
 
     if (scraperType === 'browser') {
@@ -923,6 +923,29 @@ export async function analyzeWebsite(
 
   try {
     return await scraper.analyzeStructure(url);
+  } finally {
+    await scraper.closeBrowser();
+  }
+}
+
+/**
+ * Fetch raw HTML from a URL using the scraper
+ */
+export async function fetchPageHtml(
+  url: string,
+  config?: Partial<ScraperConfig>
+): Promise<string> {
+  const scraper = new WebScraper({
+    type: 'http',
+    baseUrl: url,
+    requestDelay: 1000,
+    maxConcurrent: 1,
+    authType: 'none',
+    ...config,
+  });
+
+  try {
+    return await scraper.fetchHtml(url);
   } finally {
     await scraper.closeBrowser();
   }

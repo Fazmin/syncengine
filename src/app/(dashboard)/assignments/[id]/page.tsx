@@ -36,6 +36,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import {
   ArrowLeft,
   GitBranch,
   Loader2,
@@ -49,17 +57,31 @@ import {
   Clock,
   Globe,
   Database,
+  Brain,
+  Sparkles,
+  Search,
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  Code,
+  Eye,
+  AlertTriangle,
+  XCircle,
+  Maximize2,
+  Rows3,
 } from 'lucide-react';
-import { 
-  getAssignment, 
-  updateAssignment, 
+import {
+  getAssignment,
+  updateAssignment,
   deleteAssignment,
-  suggestMappings, 
-  updateExtractionRules, 
+  suggestMappings,
+  updateExtractionRules,
   runSampleTest,
   triggerExtraction,
+  llmAnalyze,
+  llmCreateCapture,
 } from '@/lib/api';
-import type { Assignment, ExtractionRule, ExtractionRuleFormData } from '@/types';
+import type { Assignment, ExtractionRule, ExtractionRuleFormData, LLMAnalysisResult, LLMCaptureConfig } from '@/types';
 import { toast } from 'sonner';
 
 type AssignmentWithRelations = Assignment & {
@@ -88,8 +110,16 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [testResults, setTestResults] = useState<{ rows: Record<string, unknown>[]; columns?: string[] } | null>(null);
+  const [testResults, setTestResults] = useState<{ rows: Record<string, unknown>[]; columns?: string[]; error?: string; sourceUrl?: string } | null>(null);
+  const [testViewMode, setTestViewMode] = useState<'table' | 'detail'>('table');
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // LLM extraction state
+  const [isLLMAnalyzing, setIsLLMAnalyzing] = useState(false);
+  const [llmAnalysisResult, setLlmAnalysisResult] = useState<LLMAnalysisResult | null>(null);
+  const [isCreatingCapture, setIsCreatingCapture] = useState(false);
+  const [showCaptureConfig, setShowCaptureConfig] = useState(false);
 
   useEffect(() => {
     fetchAssignment();
@@ -171,26 +201,45 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   async function handleRunSampleTest() {
     setIsTesting(true);
     setTestResults(null);
-    
-    // Save rules first
-    await updateExtractionRules(id, rules);
-    
+
+    // Save rules first if in selector mode
+    if (assignment?.extractionMethod !== 'llm') {
+      await updateExtractionRules(id, rules);
+    }
+
     const response = await runSampleTest(id, 5);
-    
+
     if (response.success && response.data) {
-      setTestResults({
-        rows: response.data.rows,
-        columns: response.data.columns,
-      });
-      if (response.data.rows.length > 0) {
-        toast.success(`Extracted ${response.data.rows.length} sample rows`);
+      if (response.data.error || !response.data.rows || response.data.rows.length === 0) {
+        // Test ran but failed or returned no data
+        setTestResults({
+          rows: response.data.rows || [],
+          columns: response.data.columns,
+          error: response.data.error || (response.data.rows?.length === 0 ? 'No data extracted. Check your selectors or capture configuration.' : undefined),
+          sourceUrl: response.data.sourceUrl,
+        });
+        if (response.data.error) {
+          toast.error('Test failed — see details below');
+        } else {
+          toast.info('No data extracted — see details below');
+        }
       } else {
-        toast.info('No data extracted - check your selectors');
+        setTestResults({
+          rows: response.data.rows,
+          columns: response.data.columns,
+          sourceUrl: response.data.sourceUrl,
+        });
+        toast.success(`Extracted ${response.data.rows.length} sample rows`);
       }
     } else {
-      toast.error(response.data?.error || 'Sample test failed');
+      // API call itself failed
+      setTestResults({
+        rows: [],
+        error: response.error || 'Sample test failed — could not connect to the API',
+      });
+      toast.error('Test failed — see details below');
     }
-    
+
     setIsTesting(false);
   }
 
@@ -217,6 +266,39 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     } else {
       toast.error(response.error || 'Failed to delete');
     }
+  }
+
+  async function handleLLMAnalyze() {
+    setIsLLMAnalyzing(true);
+    setLlmAnalysisResult(null);
+
+    const response = await llmAnalyze(id);
+
+    if (response.success && response.data) {
+      setLlmAnalysisResult(response.data.result);
+      toast.success(`Found data for ${response.data.result.summary.availableColumns} of ${response.data.result.summary.totalColumns} columns`);
+    } else {
+      toast.error(response.error || 'LLM analysis failed');
+    }
+
+    setIsLLMAnalyzing(false);
+  }
+
+  async function handleCreateCapture() {
+    if (!llmAnalysisResult) return;
+    setIsCreatingCapture(true);
+
+    const response = await llmCreateCapture(id, llmAnalysisResult.columns);
+
+    if (response.success) {
+      toast.success(response.data?.message || 'Structured capture created');
+      fetchAssignment(); // Refresh to show updated extraction method
+      setLlmAnalysisResult(null);
+    } else {
+      toast.error(response.error || 'Failed to create structured capture');
+    }
+
+    setIsCreatingCapture(false);
   }
 
   function addRule() {
@@ -264,22 +346,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         title={assignment.name}
         description={`${assignment.webSource?.name} → ${assignment.targetTable}`}
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleRunSampleTest} disabled={isTesting || rules.length === 0}>
-              {isTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TestTube className="mr-2 h-4 w-4" />}
-              Test
-            </Button>
-            <Button onClick={handleRunExtraction} disabled={isRunning || rules.length === 0}>
-              {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              Run Extraction
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href="/assignments">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
-              </Link>
-            </Button>
-          </div>
+          <Button variant="outline" asChild>
+            <Link href="/assignments">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back
+            </Link>
+          </Button>
         }
       />
 
@@ -330,13 +402,388 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             </CardContent>
           </Card>
 
+          {/* Actions Card */}
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Run & Test</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Test extraction with a sample or run a full extraction job
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleRunSampleTest}
+                    disabled={isTesting || (assignment.extractionMethod !== 'llm' && rules.length === 0)}
+                  >
+                    {isTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TestTube className="mr-2 h-4 w-4" />}
+                    Test Sample
+                  </Button>
+                  <Button
+                    onClick={handleRunExtraction}
+                    disabled={isRunning || (assignment.extractionMethod !== 'llm' && rules.length === 0)}
+                  >
+                    {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                    Run Extraction
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Test Results */}
+          {testResults && (
+            <Card className={testResults.error ? 'border-destructive/50' : ''}>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    {testResults.error ? (
+                      <>
+                        <XCircle className="h-5 w-5 text-destructive" />
+                        Sample Test Failed
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                        Sample Test Results
+                      </>
+                    )}
+                  </CardTitle>
+                  <div className="flex items-center gap-1">
+                    {testResults.rows.length > 0 && (
+                      <div className="flex items-center gap-0.5 rounded-md border p-0.5 mr-2">
+                        <Button
+                          variant={testViewMode === 'table' ? 'secondary' : 'ghost'}
+                          size="sm"
+                          onClick={() => setTestViewMode('table')}
+                          className="h-6 px-2"
+                          title="Table view"
+                        >
+                          <Rows3 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant={testViewMode === 'detail' ? 'secondary' : 'ghost'}
+                          size="sm"
+                          onClick={() => setTestViewMode('detail')}
+                          className="h-6 px-2"
+                          title="Detail view"
+                        >
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    )}
+                    <Button variant="ghost" size="sm" onClick={() => setTestResults(null)} className="h-7 px-2 text-xs text-muted-foreground">
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+                <CardDescription>
+                  {testResults.error
+                    ? 'The test encountered an error'
+                    : `${testResults.rows.length} rows extracted`}
+                  {testResults.sourceUrl && (
+                    <span className="block text-xs mt-1 font-mono truncate">{testResults.sourceUrl}</span>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {testResults.error && (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 mb-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-destructive">Error Details</p>
+                        <pre className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap font-mono break-all">
+                          {testResults.error}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {testResults.rows.length > 0 && testViewMode === 'table' && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          {(testResults.columns || Object.keys(testResults.rows[0] || {})).map(col => (
+                            <TableHead key={col}>{col}</TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {testResults.rows.map((row, i) => (
+                          <TableRow
+                            key={i}
+                            className="cursor-pointer hover:bg-muted/50"
+                            onClick={() => setSelectedRowIndex(i)}
+                          >
+                            {(testResults.columns || Object.keys(row)).map(col => (
+                              <TableCell key={col} className="max-w-[200px] truncate">
+                                {String(row[col] ?? '')}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    <p className="text-[11px] text-muted-foreground mt-2">Click a row to view full details</p>
+                  </div>
+                )}
+
+                {testResults.rows.length > 0 && testViewMode === 'detail' && (
+                  <div className="space-y-4">
+                    {testResults.rows.map((row, i) => (
+                      <div key={i} className="rounded-lg border p-4 space-y-2">
+                        <div className="flex items-center justify-between mb-2">
+                          <Badge variant="outline" className="text-xs">Row {i + 1}</Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => setSelectedRowIndex(i)}
+                          >
+                            <Maximize2 className="h-3 w-3 mr-1" />
+                            Expand
+                          </Button>
+                        </div>
+                        {(testResults.columns || Object.keys(row)).map(col => (
+                          <div key={col} className="grid grid-cols-[140px_1fr] gap-2 items-start">
+                            <span className="text-xs font-medium text-muted-foreground truncate">{col}</span>
+                            <span className="text-sm break-all">{String(row[col] ?? '')}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {!testResults.error && testResults.rows.length === 0 && (
+                  <div className="text-center py-4 text-muted-foreground text-sm">
+                    No rows extracted. Check your extraction rules or capture configuration.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Extraction Method Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Extraction Method</CardTitle>
+                  <CardDescription>How data is extracted from the website</CardDescription>
+                </div>
+                <Badge variant="outline" className={
+                  assignment.extractionMethod === 'llm'
+                    ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                    : 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                }>
+                  {assignment.extractionMethod === 'llm' ? (
+                    <><Brain className="mr-1 h-3 w-3" /> LLM Structured Output</>
+                  ) : (
+                    <><Search className="mr-1 h-3 w-3" /> CSS/XPath Selectors</>
+                  )}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {assignment.extractionMethod === 'llm' ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border bg-purple-500/5 border-purple-500/20 p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-purple-400" />
+                        <span className="font-medium text-sm">LLM Structured Capture Active</span>
+                      </div>
+                      {assignment.llmCaptureConfig && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowCaptureConfig(!showCaptureConfig)}
+                          className="h-7 px-2 text-xs"
+                        >
+                          {showCaptureConfig ? (
+                            <><ChevronUp className="mr-1 h-3 w-3" /> Hide Config</>
+                          ) : (
+                            <><Eye className="mr-1 h-3 w-3" /> View Config</>
+                          )}
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      This assignment uses AI-powered extraction. The LLM analyzes each page and returns structured data matching your database schema.
+                      {assignment.llmCaptureConfig && (() => {
+                        try {
+                          const config: LLMCaptureConfig = JSON.parse(assignment.llmCaptureConfig);
+                          return ` Capturing ${config.columnMappings.length} columns using ${config.model}.`;
+                        } catch {
+                          return '';
+                        }
+                      })()}
+                    </p>
+                  </div>
+
+                  {/* Capture Config Detailed View */}
+                  {showCaptureConfig && assignment.llmCaptureConfig && (() => {
+                    try {
+                      const config: LLMCaptureConfig = JSON.parse(assignment.llmCaptureConfig);
+                      return (
+                        <div className="space-y-4 rounded-lg border p-4 max-h-[60vh] overflow-y-auto">
+                          {/* Model & Temperature */}
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">Model:</span>
+                              <Badge variant="outline" className="text-xs">{config.model}</Badge>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">Temperature:</span>
+                              <Badge variant="outline" className="text-xs">{config.temperature}</Badge>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">Columns:</span>
+                              <Badge variant="outline" className="text-xs">{config.columnMappings.length}</Badge>
+                            </div>
+                          </div>
+
+                          {/* Column Mappings */}
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Database className="h-3.5 w-3.5 text-blue-400" />
+                              <span className="text-sm font-medium">Column Mappings</span>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead className="text-xs">DB Column</TableHead>
+                                    <TableHead className="text-xs">JSON Field</TableHead>
+                                    <TableHead className="text-xs">Type</TableHead>
+                                    <TableHead className="text-xs">Required</TableHead>
+                                    <TableHead className="text-xs">Description</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {config.columnMappings.map((mapping) => (
+                                    <TableRow key={mapping.columnName}>
+                                      <TableCell className="text-xs font-mono">{mapping.columnName}</TableCell>
+                                      <TableCell className="text-xs font-mono">{mapping.jsonField}</TableCell>
+                                      <TableCell className="text-xs">
+                                        <Badge variant="outline" className="text-[10px] px-1.5">{mapping.dataType}</Badge>
+                                      </TableCell>
+                                      <TableCell className="text-xs">
+                                        {mapping.isRequired ? (
+                                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+                                        ) : (
+                                          <span className="text-muted-foreground">—</span>
+                                        )}
+                                      </TableCell>
+                                      <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">
+                                        {mapping.description}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </div>
+
+                          {/* System Prompt */}
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Brain className="h-3.5 w-3.5 text-purple-400" />
+                              <span className="text-sm font-medium">System Prompt</span>
+                            </div>
+                            <pre className="text-xs bg-muted rounded-lg p-3 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap font-mono">
+                              {config.systemPrompt}
+                            </pre>
+                          </div>
+
+                          {/* JSON Schema */}
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Code className="h-3.5 w-3.5 text-amber-400" />
+                              <span className="text-sm font-medium">JSON Schema</span>
+                            </div>
+                            <pre className="text-xs bg-muted rounded-lg p-3 overflow-x-auto max-h-[200px] overflow-y-auto whitespace-pre-wrap font-mono">
+                              {JSON.stringify(config.jsonSchema, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      );
+                    } catch {
+                      return (
+                        <div className="text-sm text-muted-foreground">
+                          Unable to parse capture configuration.
+                        </div>
+                      );
+                    }
+                  })()}
+
+                  <Button variant="outline" size="sm" onClick={handleLLMAnalyze} disabled={isLLMAnalyzing}>
+                    {isLLMAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                    Re-analyze with LLM
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Using CSS/XPath selectors to extract data. You can switch to LLM-based extraction by running an LLM analysis from the web source.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={handleLLMAnalyze} disabled={isLLMAnalyzing}>
+                    {isLLMAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Brain className="mr-2 h-4 w-4" />}
+                    Try LLM Analysis
+                  </Button>
+                </div>
+              )}
+
+              {/* LLM Analysis Results (inline) */}
+              {llmAnalysisResult && (
+                <div className="mt-4 space-y-3 border-t pt-4">
+                  <div className="flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-purple-400" />
+                    <span className="text-sm font-medium">
+                      LLM found data for {llmAnalysisResult.summary.availableColumns} of {llmAnalysisResult.summary.totalColumns} columns
+                    </span>
+                  </div>
+                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                    {llmAnalysisResult.columns.map((col) => (
+                      <div key={col.columnName} className="flex items-center gap-2 text-sm py-1">
+                        {col.isAvailable ? (
+                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        ) : (
+                          <Clock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        )}
+                        <span className={col.isAvailable ? '' : 'text-muted-foreground'}>{col.columnName}</span>
+                        {col.sampleValue && (
+                          <span className="text-xs text-muted-foreground truncate">— &quot;{col.sampleValue}&quot;</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <Button onClick={handleCreateCapture} disabled={isCreatingCapture || llmAnalysisResult.summary.availableColumns === 0}>
+                    {isCreatingCapture ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-2 h-4 w-4" />
+                    )}
+                    Create Structured Capture
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Extraction Rules */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Extraction Rules</CardTitle>
-                  <CardDescription>Define how to extract data from the website</CardDescription>
+                  <CardDescription>Define how to extract data from the website (selector mode)</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={handleSuggestMappings} disabled={isSuggesting}>
@@ -453,43 +900,6 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             </CardContent>
           </Card>
 
-          {/* Test Results */}
-          {testResults && testResults.rows.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-                  Sample Test Results
-                </CardTitle>
-                <CardDescription>{testResults.rows.length} rows extracted</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        {(testResults.columns || Object.keys(testResults.rows[0] || {})).map(col => (
-                          <TableHead key={col}>{col}</TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {testResults.rows.map((row, i) => (
-                        <TableRow key={i}>
-                          {(testResults.columns || Object.keys(row)).map(col => (
-                            <TableCell key={col} className="max-w-[200px] truncate">
-                              {String(row[col] ?? '')}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Recent Jobs */}
           {assignment.extractionJobs && assignment.extractionJobs.length > 0 && (
             <Card>
@@ -545,6 +955,63 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           </Card>
         </div>
       </main>
+
+      {/* Row Detail Dialog */}
+      <Dialog open={selectedRowIndex !== null} onOpenChange={(open) => { if (!open) setSelectedRowIndex(null); }}>
+        <DialogContent className="max-w-lg max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>Row {selectedRowIndex !== null ? selectedRowIndex + 1 : ''} Details</DialogTitle>
+            <DialogDescription>
+              {testResults?.rows && selectedRowIndex !== null && testResults.rows.length > 1 && (
+                `Row ${selectedRowIndex + 1} of ${testResults.rows.length}`
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {testResults?.rows && selectedRowIndex !== null && testResults.rows[selectedRowIndex] && (
+            <>
+              <ScrollArea className="max-h-[60vh]">
+                <div className="space-y-3 pr-4">
+                  {(testResults.columns || Object.keys(testResults.rows[selectedRowIndex])).map(col => {
+                    const value = testResults.rows[selectedRowIndex!][col];
+                    const displayValue = value === null || value === undefined ? '' : String(value);
+                    return (
+                      <div key={col} className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">{col}</label>
+                        <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm break-all whitespace-pre-wrap min-h-[36px]">
+                          {displayValue || <span className="text-muted-foreground italic">empty</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+              {testResults.rows.length > 1 && (
+                <div className="flex items-center justify-between border-t pt-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={selectedRowIndex === 0}
+                    onClick={() => setSelectedRowIndex(Math.max(0, (selectedRowIndex ?? 0) - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedRowIndex + 1} / {testResults.rows.length}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={selectedRowIndex === testResults.rows.length - 1}
+                    onClick={() => setSelectedRowIndex(Math.min(testResults.rows.length - 1, (selectedRowIndex ?? 0) + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>

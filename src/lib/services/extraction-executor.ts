@@ -1,6 +1,7 @@
 import prisma from '../db';
 import { WebScraper, createScraperFromWebSource } from './web-scraper';
 import { createConnector, DatabaseConnector } from './database-connector';
+import { LLMExtractor } from './llm-extractor';
 import { decrypt, isEncrypted } from '../encryption';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -8,6 +9,7 @@ import {
   ExtractionRule,
   ExtractedData,
   PaginationConfig,
+  LLMCaptureConfig,
   LogLevel,
 } from '@/types';
 
@@ -52,8 +54,14 @@ export class ExtractionExecutor {
       throw new Error('Assignment missing data source or web source');
     }
 
-    if (assignment.extractionRules.length === 0) {
+    const isLLMMode = assignment.extractionMethod === 'llm';
+
+    if (!isLLMMode && assignment.extractionRules.length === 0) {
       throw new Error('No active extraction rules configured');
+    }
+
+    if (isLLMMode && !assignment.llmCaptureConfig) {
+      throw new Error('LLM extraction mode requires a structured capture configuration. Run "Create Structured Capture" first.');
     }
 
     // Create extraction job
@@ -71,7 +79,7 @@ export class ExtractionExecutor {
     try {
       // Update job status to running
       await this.updateJobStatus('running');
-      await this.log('info', 'Starting extraction job');
+      await this.log('info', `Starting extraction job (${isLLMMode ? 'LLM' : 'selector'} mode)`);
 
       // Initialize scraper
       this.scraper = createScraperFromWebSource(assignment.webSource);
@@ -85,27 +93,56 @@ export class ExtractionExecutor {
       const allRows: Record<string, unknown>[] = [];
       let pagesProcessed = 0;
 
-      for (const url of urls) {
-        try {
-          await this.log('debug', `Scraping: ${url}`, undefined, url);
-          
-          const data = await this.scraper.scrapeUrl(
-            url,
-            assignment.extractionRules as unknown as ExtractionRule[]
-          );
-          
-          allRows.push(...data.rows);
-          pagesProcessed++;
-          
-          await this.updateJob({
-            pagesProcessed,
-            rowsExtracted: allRows.length,
-            currentUrl: url,
-          });
+      if (isLLMMode) {
+        // LLM-based extraction
+        const captureConfig: LLMCaptureConfig = JSON.parse(assignment.llmCaptureConfig!);
+        const llmExtractor = new LLMExtractor(captureConfig.model);
 
-          await this.log('info', `Extracted ${data.rows.length} rows from page`, undefined, url);
-        } catch (error) {
-          await this.log('error', `Failed to scrape: ${error instanceof Error ? error.message : 'Unknown error'}`, undefined, url);
+        for (const url of urls) {
+          try {
+            await this.log('debug', `LLM extracting: ${url}`, undefined, url);
+
+            const html = await this.scraper.fetchHtml(url);
+            const rows = await llmExtractor.extractWithStructuredOutput(html, captureConfig, url);
+
+            allRows.push(...rows);
+            pagesProcessed++;
+
+            await this.updateJob({
+              pagesProcessed,
+              rowsExtracted: allRows.length,
+              currentUrl: url,
+            });
+
+            await this.log('info', `LLM extracted ${rows.length} rows from page`, undefined, url);
+          } catch (error) {
+            await this.log('error', `LLM extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`, undefined, url);
+          }
+        }
+      } else {
+        // Selector-based extraction (existing behavior)
+        for (const url of urls) {
+          try {
+            await this.log('debug', `Scraping: ${url}`, undefined, url);
+
+            const data = await this.scraper.scrapeUrl(
+              url,
+              assignment.extractionRules as unknown as ExtractionRule[]
+            );
+
+            allRows.push(...data.rows);
+            pagesProcessed++;
+
+            await this.updateJob({
+              pagesProcessed,
+              rowsExtracted: allRows.length,
+              currentUrl: url,
+            });
+
+            await this.log('info', `Extracted ${data.rows.length} rows from page`, undefined, url);
+          } catch (error) {
+            await this.log('error', `Failed to scrape: ${error instanceof Error ? error.message : 'Unknown error'}`, undefined, url);
+          }
         }
       }
 
@@ -559,23 +596,42 @@ export async function runSampleExtraction(
     return { rows: [], success: false, error: 'Assignment not found' };
   }
 
-  if (assignment.extractionRules.length === 0) {
+  const isLLMMode = assignment.extractionMethod === 'llm';
+
+  if (!isLLMMode && assignment.extractionRules.length === 0) {
     return { rows: [], success: false, error: 'No extraction rules configured' };
+  }
+
+  if (isLLMMode && !assignment.llmCaptureConfig) {
+    return { rows: [], success: false, error: 'LLM mode requires a structured capture configuration' };
   }
 
   const scraper = createScraperFromWebSource(assignment.webSource);
 
   try {
     const url = assignment.startUrl || assignment.webSource.baseUrl;
-    const data = await scraper.scrapeUrl(
-      url,
-      assignment.extractionRules as unknown as ExtractionRule[]
-    );
 
-    return {
-      rows: data.rows.slice(0, maxRows),
-      success: true,
-    };
+    if (isLLMMode) {
+      const captureConfig: LLMCaptureConfig = JSON.parse(assignment.llmCaptureConfig!);
+      const llmExtractor = new LLMExtractor(captureConfig.model);
+      const html = await scraper.fetchHtml(url);
+      const rows = await llmExtractor.extractWithStructuredOutput(html, captureConfig, url);
+
+      return {
+        rows: rows.slice(0, maxRows),
+        success: true,
+      };
+    } else {
+      const data = await scraper.scrapeUrl(
+        url,
+        assignment.extractionRules as unknown as ExtractionRule[]
+      );
+
+      return {
+        rows: data.rows.slice(0, maxRows),
+        success: true,
+      };
+    }
   } catch (error) {
     return {
       rows: [],

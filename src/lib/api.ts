@@ -1,9 +1,9 @@
 // API client for SyncEngine
 
-import type { 
-  DataSource, 
-  SyncConfig, 
-  SyncJob, 
+import type {
+  DataSource,
+  SyncConfig,
+  SyncJob,
   DashboardStats,
   ApiResponse,
   DataSourceFormData,
@@ -19,6 +19,10 @@ import type {
   ExtractionRuleFormData,
   WebsiteStructure,
   MappingSuggestion,
+  SchemaAwareAnalysis,
+  LLMAnalysisResult,
+  LLMColumnAnalysis,
+  LLMCaptureConfig,
   ProcessLog,
 } from '@/types';
 
@@ -212,6 +216,16 @@ export async function analyzeWebSource(id: string, url?: string): Promise<ApiRes
   });
 }
 
+export async function analyzeWebSourceWithSchema(
+  webSourceId: string,
+  assignmentId: string
+): Promise<ApiResponse<{ success: boolean; result: SchemaAwareAnalysis }>> {
+  return fetchApi(`/web-sources/${webSourceId}/analyze-with-schema`, {
+    method: 'POST',
+    body: JSON.stringify({ assignmentId }),
+  });
+}
+
 export async function testWebSourceConnection(
   id: string, 
   options?: { url?: string; selectors?: { selector: string; attribute?: string; name?: string }[] }
@@ -311,6 +325,23 @@ export async function triggerExtraction(assignmentId: string, mode?: 'manual' | 
   return fetchApi(`/assignments/${assignmentId}/run`, {
     method: 'POST',
     body: JSON.stringify({ mode }),
+  });
+}
+
+// LLM-based extraction
+export async function llmAnalyze(assignmentId: string): Promise<ApiResponse<{ success: boolean; result: LLMAnalysisResult }>> {
+  return fetchApi(`/assignments/${assignmentId}/llm-analyze`, {
+    method: 'POST',
+  });
+}
+
+export async function llmCreateCapture(
+  assignmentId: string,
+  columns: LLMColumnAnalysis[]
+): Promise<ApiResponse<{ success: boolean; captureConfig: LLMCaptureConfig; message: string }>> {
+  return fetchApi(`/assignments/${assignmentId}/llm-create-capture`, {
+    method: 'POST',
+    body: JSON.stringify({ columns }),
   });
 }
 

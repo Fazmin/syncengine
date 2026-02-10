@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardAction } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,11 +45,18 @@ import {
   AlertCircle,
   Loader2,
   Search,
-  Bot,
   List,
+  ArrowRight,
+  Database,
+  Save,
+  Table2,
+  Brain,
+  Sparkles,
+  CheckCircle,
+  XCircle as XCircleIcon,
 } from 'lucide-react';
-import { getWebSources, deleteWebSource, testWebSourceConnection, analyzeWebSource } from '@/lib/api';
-import type { WebSource, WebsiteStructure } from '@/types';
+import { getWebSources, deleteWebSource, testWebSourceConnection, getAssignments, analyzeWebSourceWithSchema, updateExtractionRules, llmAnalyze, llmCreateCapture } from '@/lib/api';
+import type { WebSource, Assignment, SchemaAwareAnalysis, ExtractionRuleFormData, LLMAnalysisResult, LLMColumnAnalysis, ExtractionMethod, LLMCaptureConfig } from '@/types';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -73,6 +81,19 @@ function ConnectionStatusBadge({ status }: { status: string }) {
       {status}
     </Badge>
   );
+}
+
+function ConfidenceBadge({ confidence }: { confidence: number }) {
+  if (confidence === 0) {
+    return <Badge variant="outline" className="bg-slate-500/10 text-slate-400 border-slate-500/20 text-xs">No match</Badge>;
+  }
+  if (confidence >= 0.8) {
+    return <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">{Math.round(confidence * 100)}%</Badge>;
+  }
+  if (confidence >= 0.5) {
+    return <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">{Math.round(confidence * 100)}%</Badge>;
+  }
+  return <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">{Math.round(confidence * 100)}%</Badge>;
 }
 
 function WebSourceCard({
@@ -146,7 +167,7 @@ function WebSourceCard({
       <CardContent>
         <div className="flex flex-wrap items-center gap-3">
           <ConnectionStatusBadge status={webSource.connectionStatus} />
-          
+
           <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/20">
             {scraperTypeLabels[webSource.scraperType] || webSource.scraperType}
           </Badge>
@@ -164,20 +185,20 @@ function WebSourceCard({
               })()}
             </Badge>
           )}
-          
+
           {webSource.paginationType && webSource.paginationType !== 'none' && (
             <Badge variant="secondary">
               Pagination: {webSource.paginationType}
             </Badge>
           )}
-          
+
           {webSource._count?.assignments ? (
             <Badge variant="secondary">
               {webSource._count.assignments} assignment{webSource._count.assignments !== 1 ? 's' : ''}
             </Badge>
           ) : null}
         </div>
-        
+
         <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
           <span>Delay: {webSource.requestDelay}ms</span>
           {webSource.lastAnalyzedAt && (
@@ -196,10 +217,26 @@ export default function WebSourcesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+
+  // Schema-aware analysis state
   const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [analysisResults, setAnalysisResults] = useState<{ webSourceName: string; structure: WebsiteStructure } | null>(null);
+  const [showAssignmentPicker, setShowAssignmentPicker] = useState(false);
+  const [pendingAnalyzeId, setPendingAnalyzeId] = useState<string | null>(null);
+  const [pickerAssignments, setPickerAssignments] = useState<Assignment[]>([]);
+  const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [showAnalysisDialog, setShowAnalysisDialog] = useState(false);
-  const [analyzingWebSourceName, setAnalyzingWebSourceName] = useState<string>('');
+  const [schemaAnalysis, setSchemaAnalysis] = useState<SchemaAwareAnalysis | null>(null);
+  const [acceptedMappings, setAcceptedMappings] = useState<Set<string>>(new Set());
+  const [savingRules, setSavingRules] = useState(false);
+  const [analyzingWebSourceName, setAnalyzingWebSourceName] = useState('');
+
+  // LLM analysis state
+  const [analysisMethod, setAnalysisMethod] = useState<ExtractionMethod>('selector');
+  const [llmAnalysis, setLlmAnalysis] = useState<LLMAnalysisResult | null>(null);
+  const [creatingCapture, setCreatingCapture] = useState(false);
+  const [captureCreated, setCaptureCreated] = useState(false);
+  const [captureConfig, setCaptureConfig] = useState<LLMCaptureConfig | null>(null);
+  const [showCaptureDetails, setShowCaptureDetails] = useState(false);
 
   useEffect(() => {
     fetchWebSources();
@@ -215,7 +252,7 @@ export default function WebSourcesPage() {
 
   async function handleDelete() {
     if (!deleteId) return;
-    
+
     const response = await deleteWebSource(deleteId);
     if (response.success) {
       setWebSources((prev) => prev.filter((ws) => ws.id !== deleteId));
@@ -229,18 +266,18 @@ export default function WebSourcesPage() {
   async function handleTest(id: string) {
     setTestingId(id);
     const response = await testWebSourceConnection(id);
-    
+
     if (response.success && response.data) {
       setWebSources((prev) =>
         prev.map((ws) =>
-          ws.id === id ? { 
-            ...ws, 
-            connectionStatus: response.data?.success ? 'connected' : 'failed', 
-            lastTestedAt: new Date() 
+          ws.id === id ? {
+            ...ws,
+            connectionStatus: response.data?.success ? 'connected' : 'failed',
+            lastTestedAt: new Date()
           } : ws
         )
       );
-      
+
       if (response.data.success) {
         toast.success('Connection successful');
       } else {
@@ -249,52 +286,155 @@ export default function WebSourcesPage() {
     } else {
       toast.error('Failed to test connection');
     }
-    
+
     setTestingId(null);
   }
 
   async function handleAnalyze(id: string) {
     const webSource = webSources.find(ws => ws.id === id);
-    setAnalyzingId(id);
-    setAnalysisResults(null);
     setAnalyzingWebSourceName(webSource?.name || 'Web Source');
-    setShowAnalysisDialog(true); // Show dialog immediately in loading state
-    
-    const response = await analyzeWebSource(id);
-    
-    if (response.success && response.data) {
-      const structure = response.data.structure;
-      
-      setWebSources((prev) =>
-        prev.map((ws) =>
-          ws.id === id ? { 
-            ...ws, 
-            lastAnalyzedAt: new Date(),
-            paginationType: structure?.pagination?.type || ws.paginationType,
-          } : ws
-        )
-      );
-      
-      // Populate the dialog with results
-      setAnalysisResults({
-        webSourceName: webSource?.name || 'Web Source',
-        structure: structure || {
-          url: webSource?.baseUrl || '',
-          title: 'Unknown',
-          repeatingElements: [],
-          forms: [],
-          links: [],
-        },
-      });
-      
-      toast.success(`Found ${structure?.repeatingElements?.length || 0} data patterns${structure?.pagination ? ' with pagination' : ''}`);
-    } else {
-      toast.error(response.error || 'Failed to analyze website');
-      setShowAnalysisDialog(false); // Close dialog on error
+    setLoadingAssignments(true);
+    setPendingAnalyzeId(id);
+
+    // Fetch assignments for this web source
+    const response = await getAssignments({ webSourceId: id });
+    setLoadingAssignments(false);
+
+    if (!response.success || !response.data) {
+      toast.error('Failed to fetch assignments');
+      setPendingAnalyzeId(null);
+      return;
     }
-    
-    setAnalyzingId(null);
+
+    const assignments = response.data;
+
+    if (assignments.length === 0) {
+      toast.error('No assignments found. Create an assignment for this web source first to enable schema-aware analysis.');
+      setPendingAnalyzeId(null);
+      return;
+    }
+
+    // Always show picker so user can choose extraction method
+    setPickerAssignments(assignments);
+    setShowAssignmentPicker(true);
   }
+
+  async function runSchemaAnalysis(webSourceId: string, assignmentId: string) {
+    setShowAssignmentPicker(false);
+    setAnalyzingId(webSourceId);
+    setSchemaAnalysis(null);
+    setLlmAnalysis(null);
+    setAcceptedMappings(new Set());
+    setCaptureCreated(false);
+    setShowAnalysisDialog(true);
+
+    if (analysisMethod === 'llm') {
+      // LLM-based analysis
+      const response = await llmAnalyze(assignmentId);
+
+      if (response.success && response.data) {
+        setLlmAnalysis(response.data.result);
+        toast.success(`Found data for ${response.data.result.summary.availableColumns} of ${response.data.result.summary.totalColumns} columns`);
+      } else {
+        toast.error(response.error || 'Failed to analyze with LLM');
+        setShowAnalysisDialog(false);
+      }
+    } else {
+      // Selector-based analysis (existing)
+      const response = await analyzeWebSourceWithSchema(webSourceId, assignmentId);
+
+      if (response.success && response.data) {
+        const result = response.data.result;
+        setSchemaAnalysis(result);
+
+        const initialAccepted = new Set<string>();
+        result.proposedMappings.forEach(m => {
+          if (m.confidence > 0) initialAccepted.add(m.targetColumn);
+        });
+        setAcceptedMappings(initialAccepted);
+
+        setWebSources((prev) =>
+          prev.map((ws) =>
+            ws.id === webSourceId ? { ...ws, lastAnalyzedAt: new Date() } : ws
+          )
+        );
+
+        toast.success(`Mapped ${result.summary.mappedColumns} of ${result.summary.totalColumns} columns`);
+      } else {
+        toast.error(response.error || 'Failed to analyze with schema');
+        setShowAnalysisDialog(false);
+      }
+    }
+
+    setAnalyzingId(null);
+    setPendingAnalyzeId(null);
+  }
+
+  async function handleCreateCapture() {
+    if (!llmAnalysis) return;
+    setCreatingCapture(true);
+
+    const response = await llmCreateCapture(llmAnalysis.assignmentId, llmAnalysis.columns);
+
+    if (response.success) {
+      setCaptureCreated(true);
+      if (response.data?.captureConfig) {
+        setCaptureConfig(response.data.captureConfig);
+        setShowCaptureDetails(true);
+      }
+      toast.success(response.data?.message || 'Structured capture created');
+    } else {
+      toast.error(response.error || 'Failed to create structured capture');
+    }
+
+    setCreatingCapture(false);
+  }
+
+  function toggleMapping(targetColumn: string) {
+    setAcceptedMappings(prev => {
+      const next = new Set(prev);
+      if (next.has(targetColumn)) {
+        next.delete(targetColumn);
+      } else {
+        next.add(targetColumn);
+      }
+      return next;
+    });
+  }
+
+  async function handleSaveRules() {
+    if (!schemaAnalysis) return;
+    setSavingRules(true);
+
+    const rules: ExtractionRuleFormData[] = schemaAnalysis.proposedMappings
+      .filter(m => acceptedMappings.has(m.targetColumn) && m.confidence > 0)
+      .map(m => ({
+        targetColumn: m.targetColumn,
+        selector: m.selector,
+        selectorType: m.selectorType || 'css',
+        attribute: m.attribute || 'text',
+        transformType: m.transformType,
+        transformConfig: m.transformConfig,
+        dataType: m.dataType || 'string',
+        isRequired: m.isRequired,
+      }));
+
+    const response = await updateExtractionRules(schemaAnalysis.assignmentId, rules);
+
+    if (response.success) {
+      toast.success(`Saved ${rules.length} extraction rules to "${schemaAnalysis.assignmentName}"`);
+      setShowAnalysisDialog(false);
+      setSchemaAnalysis(null);
+    } else {
+      toast.error(response.error || 'Failed to save rules');
+    }
+
+    setSavingRules(false);
+  }
+
+  const acceptedCount = schemaAnalysis
+    ? schemaAnalysis.proposedMappings.filter(m => acceptedMappings.has(m.targetColumn) && m.confidence > 0).length
+    : 0;
 
   return (
     <>
@@ -362,13 +502,14 @@ export default function WebSourcesPage() {
                 onTest={() => handleTest(ws.id)}
                 onAnalyze={() => handleAnalyze(ws.id)}
                 isTesting={testingId === ws.id}
-                isAnalyzing={analyzingId === ws.id}
+                isAnalyzing={analyzingId === ws.id || (loadingAssignments && pendingAnalyzeId === ws.id)}
               />
             ))}
           </div>
         )}
       </main>
 
+      {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -387,117 +528,370 @@ export default function WebSourcesPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={showAnalysisDialog} onOpenChange={(open) => { setShowAnalysisDialog(open); if (!open) setAnalysisResults(null); }}>
-        <DialogContent className="w-[80vw] max-w-[1400px] max-h-[85vh]">
+      {/* Assignment Picker Dialog */}
+      <Dialog open={showAssignmentPicker} onOpenChange={(open) => { setShowAssignmentPicker(open); if (!open) setPendingAnalyzeId(null); }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Analysis Results: {analysisResults?.webSourceName || analyzingWebSourceName}</DialogTitle>
+            <DialogTitle>Analyze Structure</DialogTitle>
             <DialogDescription>
-              {analyzingId ? 'Analyzing website structure...' : `Detected data patterns and page structure from ${analysisResults?.structure?.url}`}
+              Choose an extraction method and select the target assignment.
             </DialogDescription>
           </DialogHeader>
-          
+
+          {/* Method Toggle */}
+          <div className="flex gap-2 p-1 rounded-lg bg-muted">
+            <button
+              className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                analysisMethod === 'selector'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setAnalysisMethod('selector')}
+            >
+              <Search className="h-4 w-4" />
+              CSS/XPath Selectors
+            </button>
+            <button
+              className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                analysisMethod === 'llm'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setAnalysisMethod('llm')}
+            >
+              <Brain className="h-4 w-4" />
+              LLM Extraction
+            </button>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            {analysisMethod === 'selector'
+              ? 'Uses CSS selectors to map website elements to database columns. Best for structured, repeating elements.'
+              : 'Uses AI to analyze page content and extract data using structured output. Best for complex or varied page layouts.'}
+          </p>
+
+          <div className="space-y-2 max-h-[300px] overflow-y-auto">
+            {pickerAssignments.map((assignment) => (
+              <button
+                key={assignment.id}
+                className="w-full flex items-center gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
+                onClick={() => pendingAnalyzeId && runSchemaAnalysis(pendingAnalyzeId, assignment.id)}
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-500/10">
+                  <Table2 className="h-4 w-4 text-blue-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-sm truncate">{assignment.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {assignment.targetSchema}.{assignment.targetTable}
+                    {assignment.dataSource ? ` on ${assignment.dataSource.name}` : ''}
+                  </p>
+                </div>
+                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Schema-Aware Analysis Results Dialog */}
+      <Dialog open={showAnalysisDialog} onOpenChange={(open) => { setShowAnalysisDialog(open); if (!open) { setSchemaAnalysis(null); setLlmAnalysis(null); setAcceptedMappings(new Set()); setCaptureCreated(false); setCaptureConfig(null); setShowCaptureDetails(false); } }}>
+        <DialogContent className="w-[80vw] max-w-[1000px] max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>Analysis Results: {analyzingWebSourceName}</DialogTitle>
+            <DialogDescription>
+              {analyzingId
+                ? analysisMethod === 'llm'
+                  ? 'Analyzing page content with LLM...'
+                  : 'Analyzing website structure with database schema...'
+                : schemaAnalysis
+                  ? `Mapping web data to ${schemaAnalysis.targetSchema}.${schemaAnalysis.targetTable} on ${schemaAnalysis.dataSourceName}`
+                  : llmAnalysis
+                    ? `LLM analysis of ${llmAnalysis.targetTable} on ${llmAnalysis.dataSourceName}`
+                    : ''}
+            </DialogDescription>
+          </DialogHeader>
+
           {analyzingId ? (
             <div className="flex flex-col items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-              <p className="text-muted-foreground">Scanning page for data patterns...</p>
-              <p className="text-sm text-muted-foreground mt-1">This may take a few seconds</p>
+              {analysisMethod === 'llm' ? (
+                <>
+                  <p className="text-muted-foreground">LLM is analyzing the page content...</p>
+                  <p className="text-sm text-muted-foreground mt-1">Checking which database columns can be populated from this page</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-muted-foreground">Analyzing website with database schema context...</p>
+                  <p className="text-sm text-muted-foreground mt-1">Discovering table columns and matching web fields</p>
+                </>
+              )}
             </div>
-          ) : (
-          <div className="grid grid-cols-2 gap-6">
-            {/* Left Column - Formatted View */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-muted-foreground">Formatted View</h3>
-              <ScrollArea className="h-[60vh] pr-4 rounded-lg border p-4">
-                <div className="space-y-6">
-                  {/* Pagination Info */}
-                  {analysisResults?.structure?.pagination && (
-                    <div className="rounded-lg border p-4">
-                      <h4 className="font-medium flex items-center gap-2 mb-2">
-                        <Badge variant="secondary">Pagination Detected</Badge>
-                      </h4>
-                      <div className="text-sm text-muted-foreground space-y-1">
-                        <p><span className="font-medium">Type:</span> {analysisResults.structure.pagination.type}</p>
-                        {analysisResults.structure.pagination.paramName && (
-                          <p><span className="font-medium">Parameter:</span> {analysisResults.structure.pagination.paramName}</p>
-                        )}
-                        {analysisResults.structure.pagination.selector && (
-                          <p><span className="font-medium">Selector:</span> <code className="bg-muted px-1 rounded">{analysisResults.structure.pagination.selector}</code></p>
+          ) : llmAnalysis ? (
+            /* LLM Analysis Results */
+            <div className="space-y-4 overflow-y-auto max-h-[calc(85vh-140px)]">
+              {/* Summary Banner */}
+              <div className="flex items-center gap-4 rounded-lg border p-3 bg-muted/30">
+                <div className="flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-purple-400" />
+                  <span className="text-sm font-medium">
+                    Found data for {llmAnalysis.summary.availableColumns} of {llmAnalysis.summary.totalColumns} columns
+                  </span>
+                </div>
+                <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-400 border-purple-500/20">
+                  LLM Analysis
+                </Badge>
+                {llmAnalysis.summary.unavailableColumns.length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {llmAnalysis.summary.unavailableColumns.length} not found
+                  </span>
+                )}
+              </div>
+
+              {/* LLM Column Analysis */}
+              <ScrollArea className="h-[50vh]">
+                <div className="space-y-1">
+                  <div className="grid grid-cols-[24px_1fr_1fr_80px] gap-2 px-2 py-1 text-xs font-medium text-muted-foreground border-b">
+                    <div></div>
+                    <div>Database Column</div>
+                    <div>Page Analysis</div>
+                    <div className="text-right">Confidence</div>
+                  </div>
+
+                  {llmAnalysis.columns.map((col) => (
+                    <div
+                      key={col.columnName}
+                      className={`grid grid-cols-[24px_1fr_1fr_80px] gap-2 items-center px-2 py-2 rounded-md ${
+                        col.isAvailable ? 'hover:bg-muted/50' : 'opacity-60'
+                      }`}
+                    >
+                      <div className="flex justify-center">
+                        {col.isAvailable ? (
+                          <CheckCircle className="h-4 w-4 text-emerald-400" />
+                        ) : (
+                          <XCircleIcon className="h-4 w-4 text-slate-400" />
                         )}
                       </div>
-                    </div>
-                  )}
 
-                  {/* Repeating Elements */}
-                  {analysisResults?.structure?.repeatingElements && analysisResults.structure.repeatingElements.length > 0 ? (
-                    <div className="space-y-4">
-                      <h4 className="font-medium">Data Patterns Found ({analysisResults.structure.repeatingElements.length})</h4>
-                      {analysisResults.structure.repeatingElements.map((element, index) => (
-                        <div key={index} className="rounded-lg border p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <code className="text-sm bg-muted px-2 py-1 rounded">{element.selector}</code>
-                            <Badge variant="outline">{element.count} items</Badge>
-                          </div>
-                          
-                          {element.fields && element.fields.length > 0 && (
-                            <div className="space-y-2">
-                              <p className="text-sm text-muted-foreground font-medium">Detected Fields:</p>
-                              <div className="grid gap-2">
-                                {element.fields.map((field, fieldIndex) => (
-                                  <div key={fieldIndex} className="flex items-start gap-3 text-sm bg-muted/50 rounded p-2">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-medium">{field.name}</span>
-                                        <Badge variant="outline" className="text-xs">{field.dataType}</Badge>
-                                      </div>
-                                      <code className="text-xs text-muted-foreground block mt-1">{field.selector} → {field.attribute}</code>
-                                    </div>
-                                    <div className="text-xs text-muted-foreground max-w-[150px] truncate" title={field.sampleValue}>
-                                      Sample: {field.sampleValue}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>No repeating data patterns detected on this page.</p>
-                      <p className="text-sm">Try analyzing a page with lists, tables, or product grids.</p>
-                    </div>
-                  )}
+                      <div className="min-w-0">
+                        <span className="font-medium text-sm truncate block">{col.columnName}</span>
+                        <span className="text-xs text-muted-foreground">{col.columnType}</span>
+                      </div>
 
-                  {/* Forms */}
-                  {analysisResults?.structure?.forms && analysisResults.structure.forms.length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="font-medium">Forms Found ({analysisResults.structure.forms.length})</h4>
-                      {analysisResults.structure.forms.map((form, index) => (
-                        <div key={index} className="text-sm bg-muted/50 rounded p-2">
-                          <p><span className="font-medium">Action:</span> {form.action || '(current page)'}</p>
-                          <p><span className="font-medium">Method:</span> {form.method}</p>
-                          <p><span className="font-medium">Fields:</span> {form.fields.join(', ') || 'None'}</p>
-                        </div>
-                      ))}
+                      <div className="min-w-0">
+                        {col.isAvailable ? (
+                          <>
+                            <span className="text-sm truncate block">{col.reasoning}</span>
+                            {col.sampleValue && (
+                              <span className="text-[11px] text-muted-foreground truncate block" title={col.sampleValue}>
+                                Sample: &quot;{col.sampleValue}&quot;
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">{col.reasoning}</span>
+                        )}
+                      </div>
+
+                      <div className="flex justify-end">
+                        <ConfidenceBadge confidence={col.confidence} />
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               </ScrollArea>
-            </div>
 
-            {/* Right Column - JSON View */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-muted-foreground">JSON Structure</h3>
-              <ScrollArea className="h-[60vh] rounded-lg border bg-slate-950">
-                <pre className="p-4 text-xs text-slate-300 font-mono whitespace-pre-wrap">
-                  {JSON.stringify(analysisResults?.structure, null, 2)}
-                </pre>
-              </ScrollArea>
+              {/* Capture Config Viewer (shown after creation) */}
+              {captureCreated && captureConfig && showCaptureDetails && (
+                <div className="space-y-3 rounded-lg border p-4 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-purple-400" />
+                      Structured Capture Created
+                    </span>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-muted-foreground">Model: <Badge variant="outline" className="text-[10px] px-1.5">{captureConfig.model}</Badge></span>
+                      <span className="text-muted-foreground">Temp: <Badge variant="outline" className="text-[10px] px-1.5">{captureConfig.temperature}</Badge></span>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs font-medium text-muted-foreground">Column Mappings ({captureConfig.columnMappings.length})</span>
+                    <div className="rounded-md border overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/50">
+                            <th className="text-left px-2 py-1 font-medium">DB Column</th>
+                            <th className="text-left px-2 py-1 font-medium">JSON Field</th>
+                            <th className="text-left px-2 py-1 font-medium">Type</th>
+                            <th className="text-left px-2 py-1 font-medium">Description</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {captureConfig.columnMappings.map((m) => (
+                            <tr key={m.columnName} className="border-t">
+                              <td className="px-2 py-1 font-mono">{m.columnName}</td>
+                              <td className="px-2 py-1 font-mono">{m.jsonField}</td>
+                              <td className="px-2 py-1">{m.dataType}</td>
+                              <td className="px-2 py-1 text-muted-foreground truncate max-w-[200px]">{m.description}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-muted-foreground hover:text-foreground">View System Prompt</summary>
+                    <pre className="mt-2 bg-muted rounded-md p-2 overflow-x-auto max-h-[150px] overflow-y-auto whitespace-pre-wrap font-mono text-[11px]">
+                      {captureConfig.systemPrompt}
+                    </pre>
+                  </details>
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-muted-foreground hover:text-foreground">View JSON Schema</summary>
+                    <pre className="mt-2 bg-muted rounded-md p-2 overflow-x-auto max-h-[150px] overflow-y-auto whitespace-pre-wrap font-mono text-[11px]">
+                      {JSON.stringify(captureConfig.jsonSchema, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              )}
+
+              {/* Footer Actions - Create Structured Capture */}
+              <div className="flex items-center justify-between border-t pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {captureCreated
+                    ? `Structured capture saved for "${llmAnalysis.assignmentName}"`
+                    : `${llmAnalysis.summary.availableColumns} columns available for extraction`}
+                </p>
+                <div className="flex items-center gap-2">
+                  {captureCreated && captureConfig && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCaptureDetails(!showCaptureDetails)}
+                    >
+                      {showCaptureDetails ? 'Hide Details' : 'View Config'}
+                    </Button>
+                  )}
+                  <Button
+                    onClick={handleCreateCapture}
+                    disabled={creatingCapture || captureCreated || llmAnalysis.summary.availableColumns === 0}
+                  >
+                    {creatingCapture ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : captureCreated ? (
+                      <CheckCircle className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Sparkles className="mr-2 h-4 w-4" />
+                    )}
+                    {captureCreated ? 'Capture Created' : 'Create Structured Capture'}
+                  </Button>
+                </div>
+              </div>
             </div>
-          </div>
-          )}
+          ) : schemaAnalysis ? (
+            /* Selector-Based Analysis Results */
+            <div className="space-y-4 overflow-y-auto max-h-[calc(85vh-140px)]">
+              {/* Summary Banner */}
+              <div className="flex items-center gap-4 rounded-lg border p-3 bg-muted/30">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">
+                    Mapped {schemaAnalysis.summary.mappedColumns} of {schemaAnalysis.summary.totalColumns} columns
+                  </span>
+                </div>
+                {schemaAnalysis.summary.averageConfidence > 0 && (
+                  <Badge variant="outline" className="text-xs">
+                    Avg confidence: {Math.round(schemaAnalysis.summary.averageConfidence * 100)}%
+                  </Badge>
+                )}
+                {schemaAnalysis.summary.unmappedColumns.length > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {schemaAnalysis.summary.unmappedColumns.length} unmapped
+                  </span>
+                )}
+              </div>
+
+              {/* Mappings Table */}
+              <ScrollArea className="h-[50vh]">
+                <div className="space-y-1">
+                  <div className="grid grid-cols-[32px_1fr_24px_1fr_80px] gap-2 px-2 py-1 text-xs font-medium text-muted-foreground border-b">
+                    <div></div>
+                    <div>Database Column</div>
+                    <div></div>
+                    <div>Web Field</div>
+                    <div className="text-right">Confidence</div>
+                  </div>
+
+                  {schemaAnalysis.proposedMappings.map((mapping) => {
+                    const isAccepted = acceptedMappings.has(mapping.targetColumn);
+                    const hasMapped = mapping.confidence > 0;
+
+                    return (
+                      <div
+                        key={mapping.targetColumn}
+                        className={`grid grid-cols-[32px_1fr_24px_1fr_80px] gap-2 items-center px-2 py-2 rounded-md ${
+                          hasMapped ? 'hover:bg-muted/50' : 'opacity-60'
+                        }`}
+                      >
+                        <div className="flex justify-center">
+                          {hasMapped && (
+                            <Checkbox
+                              checked={isAccepted}
+                              onCheckedChange={() => toggleMapping(mapping.targetColumn)}
+                            />
+                          )}
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm truncate">{mapping.targetColumn}</span>
+                            {mapping.dbColumn.isPrimaryKey && (
+                              <Badge variant="outline" className="text-[10px] px-1 py-0">PK</Badge>
+                            )}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{mapping.dbColumn.type}{mapping.dbColumn.nullable ? ', nullable' : ''}</span>
+                        </div>
+
+                        <div className="flex justify-center">
+                          {hasMapped && <ArrowRight className="h-3 w-3 text-muted-foreground" />}
+                        </div>
+
+                        <div className="min-w-0">
+                          {hasMapped && mapping.webField ? (
+                            <>
+                              <span className="text-sm truncate block">{mapping.webField.name}</span>
+                              <code className="text-[11px] text-muted-foreground truncate block">{mapping.selector}</code>
+                              {mapping.sampleValue && (
+                                <span className="text-[11px] text-muted-foreground truncate block" title={mapping.sampleValue}>
+                                  Sample: {mapping.sampleValue}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground italic">No match found</span>
+                          )}
+                        </div>
+
+                        <div className="flex justify-end">
+                          <ConfidenceBadge confidence={mapping.confidence} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+
+              {/* Footer Actions */}
+              <div className="flex items-center justify-between border-t pt-3">
+                <p className="text-sm text-muted-foreground">
+                  {acceptedCount} rule{acceptedCount !== 1 ? 's' : ''} selected for &quot;{schemaAnalysis.assignmentName}&quot;
+                </p>
+                <Button onClick={handleSaveRules} disabled={savingRules || acceptedCount === 0}>
+                  {savingRules ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  Save {acceptedCount} Rule{acceptedCount !== 1 ? 's' : ''}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

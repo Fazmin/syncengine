@@ -29,7 +29,9 @@ export async function POST(
       );
     }
 
-    if (assignment.extractionRules.length === 0) {
+    const isLLMMode = assignment.extractionMethod === 'llm';
+
+    if (!isLLMMode && assignment.extractionRules.length === 0) {
       return NextResponse.json(
         { error: 'No extraction rules configured. Please set up field mappings first.' },
         { status: 400 }
@@ -69,7 +71,9 @@ export async function POST(
     return NextResponse.json({
       success: true,
       rows: result.rows,
-      columns: assignment.extractionRules.map(r => r.targetColumn),
+      columns: isLLMMode
+        ? (result.rows.length > 0 ? Object.keys(result.rows[0]) : [])
+        : assignment.extractionRules.map(r => r.targetColumn),
       sourceUrl: assignment.startUrl || assignment.webSource?.baseUrl,
     });
   } catch (error) {

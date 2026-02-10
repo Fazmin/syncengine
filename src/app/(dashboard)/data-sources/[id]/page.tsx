@@ -20,17 +20,24 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Loader2, Save, Zap, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, Zap, RefreshCw, CheckCircle2, XCircle, AlertCircle, FileIcon, FolderOpen } from 'lucide-react';
 import { getDataSource, updateDataSource, testDataSourceConnection, getDataSourceTables } from '@/lib/api';
 import type { DatabaseType, DataSource, SyncConfig } from '@/types';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
-const dbTypes: { value: DatabaseType; label: string; icon: string; defaultPort: number }[] = [
+const dbTypes: { value: DatabaseType; label: string; icon: string; defaultPort: number; isFileDb?: boolean }[] = [
+  { value: 'sqlite', label: 'SQLite', icon: '📦', defaultPort: 0, isFileDb: true },
   { value: 'postgresql', label: 'PostgreSQL', icon: '🐘', defaultPort: 5432 },
   { value: 'mysql', label: 'MySQL', icon: '🐬', defaultPort: 3306 },
   { value: 'mssql', label: 'SQL Server', icon: '🪟', defaultPort: 1433 },
   { value: 'oracle', label: 'Oracle', icon: '🔶', defaultPort: 1521 },
+];
+
+const availableSqliteDbs = [
+  { path: './data/products.db', name: 'Products Database', description: 'E-commerce product catalog' },
+  { path: './data/customers.db', name: 'Customers Database', description: 'Customer information and orders' },
+  { path: './data/camps.db', name: 'Summer Camps Database', description: 'Summer camp listings and programs' },
 ];
 
 export default function EditDataSourcePage({ params }: { params: Promise<{ id: string }> }) {
@@ -81,8 +88,37 @@ export default function EditDataSourcePage({ params }: { params: Promise<{ id: s
     fetchDataSource();
   }, [id, router]);
 
+  const isFileDatabase = dbTypes.find(db => db.value === formData.dbType)?.isFileDb || false;
+
   function updateField<K extends keyof typeof formData>(key: K, value: typeof formData[K]) {
     setFormData((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleDbTypeChange(value: DatabaseType) {
+    const dbConfig = dbTypes.find((db) => db.value === value);
+    const isFileBased = dbConfig?.isFileDb || false;
+
+    setFormData((prev) => ({
+      ...prev,
+      dbType: value,
+      port: dbConfig?.defaultPort || prev.port,
+      host: isFileBased ? 'localhost' : prev.host,
+      username: isFileBased ? 'admin' : prev.username,
+      password: isFileBased ? 'admin' : prev.password,
+      sslEnabled: isFileBased ? false : prev.sslEnabled,
+    }));
+  }
+
+  function handleSqliteDbSelect(path: string) {
+    const selectedDb = availableSqliteDbs.find(db => db.path === path);
+    if (selectedDb) {
+      setFormData(prev => ({
+        ...prev,
+        database: path,
+        name: prev.name || selectedDb.name,
+        description: prev.description || selectedDb.description,
+      }));
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -257,7 +293,7 @@ export default function EditDataSourcePage({ params }: { params: Promise<{ id: s
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Database Type</Label>
-                    <Select value={formData.dbType} onValueChange={(v) => updateField('dbType', v as DatabaseType)}>
+                    <Select value={formData.dbType} onValueChange={(v) => handleDbTypeChange(v as DatabaseType)}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -267,6 +303,7 @@ export default function EditDataSourcePage({ params }: { params: Promise<{ id: s
                             <span className="flex items-center gap-2">
                               <span>{db.icon}</span>
                               <span>{db.label}</span>
+                              {db.isFileDb && <span className="text-xs text-muted-foreground">(File)</span>}
                             </span>
                           </SelectItem>
                         ))}
@@ -274,74 +311,132 @@ export default function EditDataSourcePage({ params }: { params: Promise<{ id: s
                     </Select>
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="host">Host</Label>
-                      <Input
-                        id="host"
-                        value={formData.host}
-                        onChange={(e) => updateField('host', e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="port">Port</Label>
-                      <Input
-                        id="port"
-                        type="number"
-                        value={formData.port}
-                        onChange={(e) => updateField('port', parseInt(e.target.value) || 0)}
-                      />
-                    </div>
-                  </div>
+                  {isFileDatabase ? (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Select Database File</Label>
+                        <Select
+                          value={formData.database}
+                          onValueChange={handleSqliteDbSelect}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a database file..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableSqliteDbs.map((db) => (
+                              <SelectItem key={db.path} value={db.path}>
+                                <span className="flex items-center gap-2">
+                                  <FileIcon className="h-4 w-4 text-muted-foreground" />
+                                  <span>{db.name}</span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Select from available SQLite database files
+                        </p>
+                      </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="database">Database Name</Label>
-                    <Input
-                      id="database"
-                      value={formData.database}
-                      onChange={(e) => updateField('database', e.target.value)}
-                    />
-                  </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="database">Or enter custom path</Label>
+                        <Input
+                          id="database"
+                          placeholder="./data/custom.db"
+                          value={formData.database}
+                          onChange={(e) => updateField('database', e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Path relative to the application root or absolute path
+                        </p>
+                      </div>
+
+                      {formData.database && (
+                        <div className="rounded-lg border bg-muted/50 p-4">
+                          <div className="flex items-center gap-2">
+                            <FolderOpen className="h-5 w-5 text-amber-500" />
+                            <div>
+                              <p className="text-sm font-medium">Selected file:</p>
+                              <p className="text-xs text-muted-foreground font-mono">{formData.database}</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="host">Host</Label>
+                          <Input
+                            id="host"
+                            value={formData.host}
+                            onChange={(e) => updateField('host', e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="port">Port</Label>
+                          <Input
+                            id="port"
+                            type="number"
+                            value={formData.port}
+                            onChange={(e) => updateField('port', parseInt(e.target.value) || 0)}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="database">Database Name</Label>
+                        <Input
+                          id="database"
+                          value={formData.database}
+                          onChange={(e) => updateField('database', e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
-              {/* Authentication */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Authentication</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="username">Username</Label>
-                    <Input
-                      id="username"
-                      value={formData.username}
-                      onChange={(e) => updateField('username', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => updateField('password', e.target.value)}
-                      placeholder="Leave blank to keep current"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between rounded-lg border p-4">
-                    <div>
-                      <Label htmlFor="ssl" className="text-sm font-medium">SSL/TLS Encryption</Label>
-                      <p className="text-xs text-muted-foreground">Enable secure connection</p>
+              {/* Authentication - Only show for non-file databases */}
+              {!isFileDatabase && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Authentication</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="username">Username</Label>
+                      <Input
+                        id="username"
+                        value={formData.username}
+                        onChange={(e) => updateField('username', e.target.value)}
+                      />
                     </div>
-                    <Switch
-                      id="ssl"
-                      checked={formData.sslEnabled}
-                      onCheckedChange={(checked) => updateField('sslEnabled', checked)}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
+                    <div className="space-y-2">
+                      <Label htmlFor="password">Password</Label>
+                      <Input
+                        id="password"
+                        type="password"
+                        value={formData.password}
+                        onChange={(e) => updateField('password', e.target.value)}
+                        placeholder="Leave blank to keep current"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border p-4">
+                      <div>
+                        <Label htmlFor="ssl" className="text-sm font-medium">SSL/TLS Encryption</Label>
+                        <p className="text-xs text-muted-foreground">Enable secure connection</p>
+                      </div>
+                      <Switch
+                        id="ssl"
+                        checked={formData.sslEnabled}
+                        onCheckedChange={(checked) => updateField('sslEnabled', checked)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               <div className="flex justify-end">
                 <Button type="submit" disabled={isSubmitting}>

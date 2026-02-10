@@ -111,9 +111,15 @@ model Assignment {
   
   // Mapping configuration (AI-generated, user-editable)
   mappingConfig   String?  // JSON: overall mapping settings
-  
+
   // Start URL for extraction (can include pagination)
   startUrl        String?
+
+  // Extraction method: 'selector' (CSS/XPath) or 'llm' (structured output)
+  extractionMethod String  @default("selector")
+
+  // LLM structured capture configuration (JSON: LLMCaptureConfig)
+  llmCaptureConfig String?
   
   // Relations
   extractionRules ExtractionRule[]
