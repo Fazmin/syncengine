@@ -778,124 +778,140 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           </Card>
 
           {/* Extraction Rules */}
-          <Card>
+          <Card className={assignment.extractionMethod === 'llm' ? 'opacity-60' : ''}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Extraction Rules</CardTitle>
-                  <CardDescription>Define how to extract data from the website (selector mode)</CardDescription>
+                  <CardDescription>
+                    {assignment.extractionMethod === 'llm'
+                      ? 'Not used — this assignment uses LLM structured output'
+                      : 'Define how to extract data from the website (selector mode)'}
+                  </CardDescription>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleSuggestMappings} disabled={isSuggesting}>
-                    {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
-                    AI Suggest
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={addRule}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Rule
-                  </Button>
-                  <Button size="sm" onClick={handleSaveRules} disabled={isSaving}>
-                    {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    Save
-                  </Button>
-                </div>
+                {assignment.extractionMethod !== 'llm' && (
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={handleSuggestMappings} disabled={isSuggesting}>
+                      {isSuggesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
+                      AI Suggest
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={addRule}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Rule
+                    </Button>
+                    <Button size="sm" onClick={handleSaveRules} disabled={isSaving}>
+                      {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                      Save
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardHeader>
             <CardContent>
-              {/* Explanation Section */}
-              <div className="mb-6 p-4 rounded-lg bg-muted/50 border border-muted">
-                <p className="text-sm font-medium mb-2">How Extraction Rules Work</p>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Each rule tells the scraper how to find and extract one piece of data from the webpage. 
-                  Think of it as giving directions: &quot;Find this element, take this value, and save it here.&quot;
-                </p>
-                <div className="grid gap-2 text-xs text-muted-foreground">
-                  <div className="flex gap-2">
-                    <span className="font-medium text-foreground min-w-[100px]">Target Column:</span>
-                    <span>The database column where the extracted data will be saved (e.g., &quot;product_name&quot;, &quot;price&quot;)</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="font-medium text-foreground min-w-[100px]">CSS Selector:</span>
-                    <span>The pattern to find elements on the page (e.g., &quot;.product-title&quot; for class, &quot;#price&quot; for ID, &quot;h1&quot; for tag)</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="font-medium text-foreground min-w-[100px]">Attribute:</span>
-                    <span>What to extract — Text (visible content), Href (link URL), Src (image URL), or HTML (raw markup)</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="font-medium text-foreground min-w-[100px]">Data Type:</span>
-                    <span>How to format the value — String (text), Number (numeric), Date (datetime), Boolean (true/false)</span>
-                  </div>
-                </div>
-              </div>
-
-              {rules.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <p>No extraction rules configured.</p>
-                  <p className="text-sm mt-1">Click &quot;AI Suggest&quot; to auto-generate rules or &quot;Add Rule&quot; to create manually.</p>
+              {assignment.extractionMethod === 'llm' ? (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Brain className="h-8 w-8 mx-auto mb-2 text-purple-400/50" />
+                  <p className="text-sm">Extraction rules are not required for LLM mode.</p>
+                  <p className="text-xs mt-1">The LLM structured capture configuration handles field mapping automatically.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {rules.map((rule, index) => (
-                    <div key={index} className="flex gap-4 items-start p-4 border rounded-lg bg-muted/30">
-                      <div className="flex-1 grid gap-4 md:grid-cols-4">
-                        <div className="space-y-1">
-                          <Label className="text-xs">Target Column</Label>
-                          <Input
-                            value={rule.targetColumn}
-                            onChange={(e) => updateRule(index, 'targetColumn', e.target.value)}
-                            placeholder="column_name"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">CSS Selector</Label>
-                          <Input
-                            value={rule.selector}
-                            onChange={(e) => updateRule(index, 'selector', e.target.value)}
-                            placeholder=".class or #id"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Attribute</Label>
-                          <Select
-                            value={rule.attribute}
-                            onValueChange={(v) => updateRule(index, 'attribute', v)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="text">Text</SelectItem>
-                              <SelectItem value="href">Href</SelectItem>
-                              <SelectItem value="src">Src</SelectItem>
-                              <SelectItem value="html">HTML</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Data Type</Label>
-                          <Select
-                            value={rule.dataType}
-                            onValueChange={(v) => updateRule(index, 'dataType', v)}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="string">String</SelectItem>
-                              <SelectItem value="number">Number</SelectItem>
-                              <SelectItem value="date">Date</SelectItem>
-                              <SelectItem value="boolean">Boolean</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
+                <>
+                  {/* Explanation Section */}
+                  <div className="mb-6 p-4 rounded-lg bg-muted/50 border border-muted">
+                    <p className="text-sm font-medium mb-2">How Extraction Rules Work</p>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Each rule tells the scraper how to find and extract one piece of data from the webpage.
+                      Think of it as giving directions: &quot;Find this element, take this value, and save it here.&quot;
+                    </p>
+                    <div className="grid gap-2 text-xs text-muted-foreground">
+                      <div className="flex gap-2">
+                        <span className="font-medium text-foreground min-w-[100px]">Target Column:</span>
+                        <span>The database column where the extracted data will be saved (e.g., &quot;product_name&quot;, &quot;price&quot;)</span>
                       </div>
-                      <Button variant="ghost" size="icon" onClick={() => removeRule(index)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      <div className="flex gap-2">
+                        <span className="font-medium text-foreground min-w-[100px]">CSS Selector:</span>
+                        <span>The pattern to find elements on the page (e.g., &quot;.product-title&quot; for class, &quot;#price&quot; for ID, &quot;h1&quot; for tag)</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="font-medium text-foreground min-w-[100px]">Attribute:</span>
+                        <span>What to extract — Text (visible content), Href (link URL), Src (image URL), or HTML (raw markup)</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="font-medium text-foreground min-w-[100px]">Data Type:</span>
+                        <span>How to format the value — String (text), Number (numeric), Date (datetime), Boolean (true/false)</span>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+
+                  {rules.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>No extraction rules configured.</p>
+                      <p className="text-sm mt-1">Click &quot;AI Suggest&quot; to auto-generate rules or &quot;Add Rule&quot; to create manually.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {rules.map((rule, index) => (
+                        <div key={index} className="flex gap-4 items-start p-4 border rounded-lg bg-muted/30">
+                          <div className="flex-1 grid gap-4 md:grid-cols-4">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Target Column</Label>
+                              <Input
+                                value={rule.targetColumn}
+                                onChange={(e) => updateRule(index, 'targetColumn', e.target.value)}
+                                placeholder="column_name"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">CSS Selector</Label>
+                              <Input
+                                value={rule.selector}
+                                onChange={(e) => updateRule(index, 'selector', e.target.value)}
+                                placeholder=".class or #id"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Attribute</Label>
+                              <Select
+                                value={rule.attribute}
+                                onValueChange={(v) => updateRule(index, 'attribute', v)}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="text">Text</SelectItem>
+                                  <SelectItem value="href">Href</SelectItem>
+                                  <SelectItem value="src">Src</SelectItem>
+                                  <SelectItem value="html">HTML</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Data Type</Label>
+                              <Select
+                                value={rule.dataType}
+                                onValueChange={(v) => updateRule(index, 'dataType', v)}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="string">String</SelectItem>
+                                  <SelectItem value="number">Number</SelectItem>
+                                  <SelectItem value="date">Date</SelectItem>
+                                  <SelectItem value="boolean">Boolean</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                          <Button variant="ghost" size="icon" onClick={() => removeRule(index)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

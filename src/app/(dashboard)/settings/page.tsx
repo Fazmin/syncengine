@@ -34,12 +34,14 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SmtpSettings } from '@/types';
+import { useFontSize, type FontSize } from '@/hooks/use-font-size';
 
 export default function SettingsPage() {
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === 'admin';
+  const { fontSize, setFontSize } = useFontSize();
 
-  const [activeTab, setActiveTab] = useState(isAdmin ? 'general' : 'notifications');
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'general' : 'appearance');
   const [smtpSettings, setSmtpSettings] = useState<SmtpSettings & { hasPassword?: boolean }>({
     id: '',
     enabled: false,
@@ -156,6 +158,7 @@ export default function SettingsPage() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList>
               {isAdmin && <TabsTrigger value="general">General</TabsTrigger>}
+              <TabsTrigger value="appearance">Appearance</TabsTrigger>
               {isAdmin && <TabsTrigger value="security">Security</TabsTrigger>}
               <TabsTrigger value="notifications">Notifications</TabsTrigger>
               {isAdmin && <TabsTrigger value="storage">Storage</TabsTrigger>}
@@ -243,6 +246,49 @@ export default function SettingsPage() {
                 </Card>
               </TabsContent>
             )}
+
+            {/* Appearance Tab - All Users */}
+            <TabsContent value="appearance" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Settings className="h-5 w-5" />
+                    Display Settings
+                  </CardTitle>
+                  <CardDescription>
+                    Customize the look and feel of the interface
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-3">
+                    <Label>Text Size</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Adjust the font size across the entire application. You can also change this from the sidebar.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      {([
+                        { value: 'compact' as FontSize, label: 'Compact', desc: 'Smaller text, more content visible' },
+                        { value: 'default' as FontSize, label: 'Default', desc: 'Balanced readability' },
+                        { value: 'large' as FontSize, label: 'Large', desc: 'Larger text, easier to read' },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setFontSize(opt.value)}
+                          className={`flex-1 rounded-lg border p-4 text-left transition-colors ${
+                            fontSize === opt.value
+                              ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                              : 'border-border hover:border-primary/50'
+                          }`}
+                        >
+                          <p className="text-sm font-medium">{opt.label}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
 
             {/* Security Tab - Admin Only */}
             {isAdmin && (

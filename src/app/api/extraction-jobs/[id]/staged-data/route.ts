@@ -55,9 +55,11 @@ export async function GET(
     const endIndex = startIndex + pageSize;
     const paginatedRows = rows.slice(startIndex, endIndex);
 
-    // Get column names from extraction rules
-    const columns = job.assignment?.extractionRules.map(r => r.targetColumn) || 
-      (paginatedRows.length > 0 ? Object.keys(paginatedRows[0]) : []);
+    // Get column names from extraction rules, or derive from row keys (LLM mode has no rules)
+    const ruleColumns = job.assignment?.extractionRules.map(r => r.targetColumn) || [];
+    const columns = ruleColumns.length > 0
+      ? ruleColumns
+      : (paginatedRows.length > 0 ? Object.keys(paginatedRows[0]) : []);
 
     return NextResponse.json({
       rows: paginatedRows,

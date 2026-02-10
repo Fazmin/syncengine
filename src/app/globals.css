@@ -115,6 +115,11 @@
   --sidebar-ring: oklch(0.7 0.15 165);
 }
 
+/* Font size scaling — applied to <html> via data attribute */
+html[data-font-size="compact"] { font-size: 16px; }
+html[data-font-size="default"] { font-size: 18px; }
+html[data-font-size="large"] { font-size: 20px; }
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

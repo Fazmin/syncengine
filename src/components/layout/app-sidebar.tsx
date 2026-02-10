@@ -21,7 +21,9 @@ import {
   Play,
   FileText,
   Zap,
+  Type,
 } from 'lucide-react';
+import { useFontSize, type FontSize } from '@/hooks/use-font-size';
 
 import {
   Sidebar,
@@ -115,9 +117,16 @@ const settingsItem = {
   icon: Settings,
 };
 
+const fontSizeOptions: { value: FontSize; label: string }[] = [
+  { value: 'compact', label: 'A' },
+  { value: 'default', label: 'A' },
+  { value: 'large', label: 'A' },
+];
+
 export function AppSidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
+  const { fontSize, setFontSize } = useFontSize();
 
   const userInitial = session?.user?.name?.[0] || session?.user?.email?.[0] || 'U';
   const userName = session?.user?.name || 'User';
@@ -223,7 +232,32 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border p-4">
+      <SidebarFooter className="border-t border-sidebar-border p-4 space-y-3">
+        {/* Font Size Toggle */}
+        <div className="flex items-center justify-between px-2">
+          <div className="flex items-center gap-1.5 text-sidebar-foreground/60">
+            <Type className="h-3.5 w-3.5" />
+            <span className="text-[11px] font-medium">Text Size</span>
+          </div>
+          <div className="flex items-center gap-0.5 rounded-md border border-sidebar-border bg-sidebar p-0.5">
+            {fontSizeOptions.map((opt, i) => (
+              <button
+                key={opt.value}
+                onClick={() => setFontSize(opt.value)}
+                className={`rounded px-2 py-0.5 transition-colors ${
+                  fontSize === opt.value
+                    ? 'bg-sidebar-accent text-sidebar-foreground font-semibold'
+                    : 'text-sidebar-foreground/50 hover:text-sidebar-foreground/80'
+                }`}
+                title={opt.value.charAt(0).toUpperCase() + opt.value.slice(1)}
+                style={{ fontSize: i === 0 ? '11px' : i === 1 ? '13px' : '15px' }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex w-full items-center gap-3 rounded-lg p-2 text-left transition-colors hover:bg-sidebar-accent">

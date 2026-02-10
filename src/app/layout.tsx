@@ -26,7 +26,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-font-size="default" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var s=localStorage.getItem('syncengine-font-size');if(s&&['compact','default','large'].indexOf(s)!==-1){document.documentElement.setAttribute('data-font-size',s)}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body
         className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >

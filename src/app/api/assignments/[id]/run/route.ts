@@ -25,7 +25,9 @@ export async function POST(
       );
     }
 
-    if (assignment.extractionRules.length === 0) {
+    const isLLMMode = assignment.extractionMethod === 'llm';
+
+    if (!isLLMMode && assignment.extractionRules.length === 0) {
       return NextResponse.json(
         { error: 'No extraction rules configured' },
         { status: 400 }
