@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx --yes better-sqlite3:*)",
+      "Bash(node scripts/create-camps-db.mjs:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(findstr:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(del \"\\\\?\\\\c:\\\\LocalWorkSpace\\\\syncengine\\\\nul\")",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd LLM-based structured extraction, schema-aware analysis, and enhanced assignment UI.\n\nImplement dual extraction methods \\(selector-based and LLM-based\\) with structured output support. Add schema-aware web source analysis that maps website fields to database columns. Enhance assignment detail page with actions card, test error logging, detail/table view toggle for results, row detail dialog, and capture config viewer. Fix dialog scrolling issues and improve sample test route for LLM mode compatibility.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
